@@ -1,0 +1,7 @@
+runs/*
+checkpoints/*
+*/__pycache__/*
+UNet*/*
+Res*/*
+Unet*/*
+*/runs/*
