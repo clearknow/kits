@@ -14,6 +14,7 @@ from torch import nn
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
 from data.kits_dataset import KitsDataset
+from utils.crop import read_image_json
 import logging
 import os
 import torch.nn.functional as F
@@ -64,9 +65,9 @@ class Validation:
         writer = SummaryWriter(comment=f'{config.network}_{config.optimizer}')
 
         if config.loss == 0:
-            weights = torch.FloatTensor(config.entropy_weight).to(device=config.device)
-            criterion = nn.CrossEntropyLoss(weight=weights)
-            # criterion = nn.CrossEntropyLoss()
+            # weights = torch.FloatTensor(config.entropy_weight).to(device=config.device)
+            # criterion = nn.CrossEntropyLoss(weight=weights)
+            criterion = nn.CrossEntropyLoss()
         else:
             criterion = nn.BCEWithLogitsLoss()
         # begin training
@@ -209,6 +210,7 @@ class Validation:
                     case_pred = case_pred.argmax(dim=1)
                     # 将整个case合并
                     case_pred = case_pred.squeeze(dim=1)
+                    # images, masks = crop_images()
                     kits_metrics += self.calculate_metrics(case_pred.cpu().numpy(),
                                                            true_masks.cpu().numpy(),
                                                            spacing.cpu().numpy())
@@ -217,32 +219,58 @@ class Validation:
                 gc.collect()
                 # pbar.update()
         else:
-            for case in var_loader:
-                # read image
-                imgs = case['image']
-                masks = case['mask']
+            counter = 0
+            for case in var_dataset:
+                imgs, true_masks = case['image'], case['mask']
+                imgs = imgs.to(device=config.device, dtype=torch.float32)
+                true_masks = true_masks.to(device=config.device, dtype=mask_type)
+                spacing = case['spacing']
                 imgs = imgs.to(device=config.device, dtype=torch.float32)
 
-                mask_type = torch.float32 if config.loss == 1 else torch.long
-                true_masks = masks.to(device=config.device, dtype=mask_type)
-                if config.loss == 0:
-                    true_masks = true_masks.squeeze(dim=1)
-                with torch.no_grad():
-                    masks_pred = model(imgs)
+                case_pred = 0
+                batch_size = 16
+                # print(imgs.shape[0])
+                # if imgs.shape[0] > 600:
+                #     # break
+                #     continue
+                counter += 1
+                # case slice patch_count bbox[y y x x]
+                crop_infos = read_image_json(config.image_json)
+                crop_info = crop_infos[case.idx]
+                crop_image, crop_mask = get_cube(imgs, true_masks, crop_info)
 
-                # print("val", true_masks.shape, masks_pred.shape)
-                tot += F.cross_entropy(masks_pred, true_masks).item()
-                # print(tot)
+                # 理论上分批次与全部批次预测结果一样：分成64批次
+                for batch in range(crop_image.shape[0] // batch_size + 1):
+                    with torch.no_grad():
+                        if crop_image.shape[0] <= batch * batch_size:
+                            break
+                        if batch == len(imgs) // batch_size:
+                            mask_pred = model(crop_image[batch * batch_size:])
+                        else:
+                            mask_pred = model(crop_image[batch * batch_size:(batch + 1) * batch_size])
+                        if batch == 0:
+                            case_pred = mask_pred
+                        else:
+                            case_pred = torch.cat([case_pred, mask_pred], dim=0)
+                        del mask_pred
+                        gc.collect()
+                crop_mask = crop_mask.squeeze(dim=1)
 
-                case_pred = masks_pred.argmax(dim=1)
+                tot += F.cross_entropy(case_pred, crop_mask).item()
+                # print(true_masks.shape, case_pred.shape)
+                case_pred = case_pred.argmax(dim=1)
                 # 将整个case合并
-                case_pred = case_pred.squeeze(dim=1)
-                kits_metrics += self.calculate_metrics(case_pred.cpu().numpy(),
-                                                       true_masks.cpu().numpy(),
-                                                       second_network=True)
-                # pbar.update(imgs.shape[0])
+                # case_pred = case_pred.squeeze(dim=1)
+                # images, masks = crop_images()
+                # combing image mask
+                combine_pred = combine_image(case_pred, imgs.shape, crop_info)
 
-            counter = len(var_loader)
+                kits_metrics += self.calculate_metrics(combine_pred.cpu().numpy(),
+                                                       true_masks.cpu().numpy(),
+                                                       spacing.cpu().numpy())
+                    # kits_metrics = 0
+                del case_pred, imgs, true_masks
+                gc.collect()
         if is_training:
             model.train()
         return tot / counter, kits_metrics / counter
@@ -377,4 +405,68 @@ class Metrics_thread(Thread):
 
     def get_result(self):
         return self.result
+
+
+def get_cube(image, mask, crop_info: dict):
+    """
+    get crop image cube
+    :param image: [n,1,h,w]
+    :param mask: [n,1,h,w]
+    :param crop_info: {slice,i,bbox}
+    :return: image， mask([n,1,h,w])
+    """
+    image_crop = torch.zeros((len(crop_info), 1, 256, 256))
+    mask_crop = torch.zeros((len(crop_info), 1, 256, 256))
+    for index in range(len(crop_info)):
+        info = crop_info[index]
+        bbox = info["bbox"]
+        # print(image[info["slice"]][0][bbox[0]:bbox[1], bbox[2]:bbox[3]].shape)
+        image_crop[index][0].add_(image[info["slice"]][0][bbox[0]:bbox[1], bbox[2]:bbox[3]])
+        mask_crop[index][0].add_(mask[info["slice"]][0][bbox[0]:bbox[1], bbox[2]:bbox[3]])
+
+    return image_crop, mask_crop
+
+
+def combine_image(mask, origin_shape, crop_info):
+    """
+    :param mask: [n,1,h1,w1]
+    :param origin_shape: [origin_n,1,h,w]
+    :param crop_info: [{slice index bbox}{}]
+    :return:
+    """
+    combine_mask = torch.zeros(origin_shape)
+    print(len(crop_info),len(mask))
+
+    for index in range(len(mask)):
+        info = crop_info[index]
+        bbox = info["bbox"]
+        mask_temp  = torch.zeros_like(combine_mask[info["slice"]][0])
+        mask_temp[bbox[0]:bbox[1], bbox[2]:bbox[3]]=mask[info["slice"]][0]
+        # mask+abs(mask-mask_pre)
+        mask_abs = torch.abs(mask_temp - combine_mask[info["slice"]][0])
+        combine_mask[info["slice"]][0].add_(mask_abs)
+        show_views(mask_abs, combine_mask[info["slice"]][0],mask_temp)
+        print(index,(mask_temp != combine_pre[info["slice"]][0]).sum())
+#         break
+    return combine_mask
+
+
+if __name__ == "__main__":
+    config = Config()
+    var_dataset = BaseDataset(config.kits_val_image_path, config.kits_val_mask_path,
+                              is_val=True)
+    crop_infos = read_image_json(config.image_json)
+    print(var_dataset.ids[0])
+    from utils.visualization import show_views
+    crop_info = crop_infos[var_dataset.ids[0]]
+    # print(crop_info)
+    image = var_dataset[1]["image"]
+    mask = var_dataset[1]["mask"]
+    show_views(image[0][0], mask[0][0])
+    crop_image, crop_mask = get_cube(image, mask, crop_info)
+    print(crop_image.shape, crop_mask.shape)
+
+    show_views(crop_mask[1][0], crop_image[1][0])
+    combine_pre = combine_image(crop_mask, image.shape, crop_info)
+    print((mask != combine_pre).sum())
 

@@ -56,7 +56,7 @@ class Config(BaseConfig):
         self.val_image_crop = "/public/home/cxiao/Study/data/kits21/val/image_crop"
         self.val_mask_crop = "/public/home/cxiao/Study/data/kits21/val/mask_crop"
 
-        self.image_boundary = "/public/home/cxiao/Study/data/kits21/image_boundary"
+        self.image_json = "/public/home/cxiao/Study/data/kits21/val/images.json"
 
         self.image_root = self.kits_image_root
         self.mask_root = self.kits_mask_root
