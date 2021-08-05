@@ -29,8 +29,9 @@ class BaseDataset(Dataset):
         self.mask_root = mask_root
         # file name
         self.is_val = is_val
-        self.ids = self.get_file(image_root) #[:1]if not is_val else self.get_file(image_root)
+        self.ids = self.get_file(image_root) # [:1]if not is_val else self.get_file(image_root)
         self.pro_pre = pre_pro
+
     def __len__(self):
         return len(self.ids)
 

@@ -3,6 +3,8 @@
     author: ChuDa xiao
 """
 import torch
+
+
 class BaseConfig:
     def __init__(self):
         self.image_root = "/public/home/cxiao/Study/git_pro/LIDC-IDRI-Preprocessing/data/image/"

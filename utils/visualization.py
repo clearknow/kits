@@ -16,15 +16,26 @@ import numpy as np
 '''
 
 
-def show_views(image, mask, prob=None, cmap=None):
+def show_views(image, mask, prob=None, cmap=None, image_title=["image", "mask", "predict"]):
+    """
+    show 2 or 3 image image
+    :param image: tensor or numpy h *w
+    :param mask:   tensor or numpy h *w
+    :param prob:  tensor or numpy h *w
+    :param cmap:  color :gray
+    :param image_title: default ["image", "mask", "predict"]
+    :return:
+    """
     counter = 2
     image_list = [image, mask]
+    # title = ["image", "mask", "predict"]
     if prob is not None:
         counter = 3
         image_list.append(prob)
 
     for i in range(0, counter):
         ax1 = plt.subplot(1, counter, i+1)
+        ax1.set_title(image_title[i])
         ax1.imshow(image_list[i], cmap=cmap)
 
     plt.show()

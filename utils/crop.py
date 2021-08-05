@@ -143,7 +143,7 @@ def get_bbox():
             crop_infos = list()
             for ct_slice in range(len(mask)):
                 contours = get_boundary(mask[ct_slice])
-                # print(len(contours))
+                print(idx, len(contours))
                 for i in range(len(contours)):
                     crop_info = dict()
                     bbox = crop(image[ct_slice], mask[ct_slice], contours[i])

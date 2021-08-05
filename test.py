@@ -7,12 +7,12 @@ import gc
 import torch
 from utils.config import config
 
+
 def read_npy():
     image = np.load(f"{config.val_mask_crop}/0_0_case_00288_.npy")
     show_single_view(image, cmap="gray")
     image = np.load(f"{config.val_image_crop}/0_0_case_00288_.npy")
     show_single_view(image, cmap="gray")
-
 
 
 def get_memory(i):

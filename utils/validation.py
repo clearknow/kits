@@ -23,6 +23,7 @@ from utils.metrics import compute_metrics_for_label, compute_disc_for_slice
 from configuration.labels import KITS_HEC_LABEL_MAPPING, HEC_NAME_LIST, HEC_SD_TOLERANCES_MM, GT_SEGM_FNAME
 sys.path.append("../")
 from threading import Thread
+import cv2
 
 
 class Validation:
@@ -156,14 +157,14 @@ class Validation:
         """
         kits_metrics = np.zeros((len(HEC_NAME_LIST), 2), dtype=float)
         model.eval()
-        mask_type = torch.float32 if config.loss == 1 else torch.long
+        mask_type = torch.long
         if config.second_network:
-            var_dataset = BaseDataset(config.val_image_crop, config.val_mask_crop,
-                                      pre_pro=False)
-            var_loader = DataLoader(var_dataset, batch_size=config.batch_size,
-                                    shuffle=True, num_workers=config.num_workers)
-        else:
             var_dataset = BaseDataset(config.val_image_path, config.val_mask_path,
+                                      pre_pro=True, is_val=True)
+            # var_loader = DataLoader(var_dataset, batch_size=config.batch_size,
+            #                         shuffle=True, num_workers=config.num_workers)
+        else:
+            var_dataset = BaseDataset(config.valxcd_image_path, config.val_mask_path,
                                       is_val=True)
         n_val = len(var_dataset)  # the number of batch
 
@@ -220,12 +221,12 @@ class Validation:
                 # pbar.update()
         else:
             counter = 0
-            for case in var_dataset:
+            for index, case in enumerate(var_dataset):
                 imgs, true_masks = case['image'], case['mask']
                 imgs = imgs.to(device=config.device, dtype=torch.float32)
                 true_masks = true_masks.to(device=config.device, dtype=mask_type)
+                # print(mask_type)
                 spacing = case['spacing']
-                imgs = imgs.to(device=config.device, dtype=torch.float32)
 
                 case_pred = 0
                 batch_size = 16
@@ -236,15 +237,18 @@ class Validation:
                 counter += 1
                 # case slice patch_count bbox[y y x x]
                 crop_infos = read_image_json(config.image_json)
-                crop_info = crop_infos[case.idx]
+                crop_info = crop_infos[var_dataset.ids[index]]
+                # print(index)
                 crop_image, crop_mask = get_cube(imgs, true_masks, crop_info)
+                # print(crop_image.shape, crop_mask.shape)
 
                 # 理论上分批次与全部批次预测结果一样：分成64批次
                 for batch in range(crop_image.shape[0] // batch_size + 1):
+                    # print(batch)
                     with torch.no_grad():
                         if crop_image.shape[0] <= batch * batch_size:
                             break
-                        if batch == len(imgs) // batch_size:
+                        if batch == len(crop_image) // batch_size:
                             mask_pred = model(crop_image[batch * batch_size:])
                         else:
                             mask_pred = model(crop_image[batch * batch_size:(batch + 1) * batch_size])
@@ -254,17 +258,19 @@ class Validation:
                             case_pred = torch.cat([case_pred, mask_pred], dim=0)
                         del mask_pred
                         gc.collect()
-                crop_mask = crop_mask.squeeze(dim=1)
-
-                tot += F.cross_entropy(case_pred, crop_mask).item()
-                # print(true_masks.shape, case_pred.shape)
-                case_pred = case_pred.argmax(dim=1)
+                # print(case_pred.shape)
                 # 将整个case合并
-                # case_pred = case_pred.squeeze(dim=1)
-                # images, masks = crop_images()
-                # combing image mask
+                # print(case_pred.shape, crop_mask.shape)
+                crop_mask = crop_mask.squeeze(dim=1)
+                # print(case_pred.dtype, crop_mask.dtype)
+                tot += F.cross_entropy(case_pred, crop_mask).item()
+                case_pred = case_pred.argmax(dim=1)
+                # print(crop_image.shape)
                 combine_pred = combine_image(case_pred, imgs.shape, crop_info)
-
+                combine_pred = combine_pred.squeeze(dim=1)
+                true_masks = true_masks.squeeze(dim=1)
+                # print(crop_mask.shape, case_pred.shape, crop_mask.shape)
+                # print(true_masks.shape, case_pred.shape)
                 kits_metrics += self.calculate_metrics(combine_pred.cpu().numpy(),
                                                        true_masks.cpu().numpy(),
                                                        spacing.cpu().numpy())
@@ -355,14 +361,11 @@ class Validation:
         # for per_case in range(len(ground_trues)):
         metrics_case = np.zeros((len(HEC_NAME_LIST), 2), dtype=float)
         for i, hec in enumerate(HEC_NAME_LIST):
-            if second_network:
-                metrics_case[i] = compute_disc_for_slice(masks, ground_trues,
-                                                         KITS_HEC_LABEL_MAPPING[hec])
-            else:
-                metrics_case[i] = compute_metrics_for_label(masks, ground_trues,
-                                                            KITS_HEC_LABEL_MAPPING[hec],
-                                                            tuple(spacing),
-                                                            sd_tolerance_mm=HEC_SD_TOLERANCES_MM[hec])
+
+            metrics_case[i] = compute_metrics_for_label(masks, ground_trues,
+                                                        KITS_HEC_LABEL_MAPPING[hec],
+                                                        tuple(spacing),
+                                                        sd_tolerance_mm=HEC_SD_TOLERANCES_MM[hec])
             #     metrics_thread.append(Metrics_thread(ground_trues[per_case],
             #                                          masks[per_case],
             #                                          tuple(spacing[per_case]),
@@ -415,40 +418,48 @@ def get_cube(image, mask, crop_info: dict):
     :param crop_info: {slice,i,bbox}
     :return: image， mask([n,1,h,w])
     """
-    image_crop = torch.zeros((len(crop_info), 1, 256, 256))
-    mask_crop = torch.zeros((len(crop_info), 1, 256, 256))
+    config = Config()
+    image_crop = torch.zeros((len(crop_info), 1, 256, 256)).to(config.device)
+    mask_crop = torch.zeros((len(crop_info), 1, 256, 256)).to(config.device)
+
     for index in range(len(crop_info)):
         info = crop_info[index]
         bbox = info["bbox"]
-        # print(image[info["slice"]][0][bbox[0]:bbox[1], bbox[2]:bbox[3]].shape)
+        # print(info["slice"], bbox)
+
         image_crop[index][0].add_(image[info["slice"]][0][bbox[0]:bbox[1], bbox[2]:bbox[3]])
         mask_crop[index][0].add_(mask[info["slice"]][0][bbox[0]:bbox[1], bbox[2]:bbox[3]])
 
-    return image_crop, mask_crop
+    return image_crop, mask_crop.type(torch.long)
 
 
 def combine_image(mask, origin_shape, crop_info):
     """
-    :param mask: [n,1,h1,w1]
+    :param mask: [n,h1,w1]
     :param origin_shape: [origin_n,1,h,w]
     :param crop_info: [{slice index bbox}{}]
     :return:
     """
-    combine_mask = torch.zeros(origin_shape)
-    print(len(crop_info),len(mask))
+    config = Config()
+    combine_mask = np.zeros(origin_shape, np.uint8)
+    # print(mask.shape, origin_shape)
+    assert len(mask.shape) == 3, "mask shape is not 3"
+    # print(len(crop_info), len(mask))
 
     for index in range(len(mask)):
         info = crop_info[index]
         bbox = info["bbox"]
-        mask_temp  = torch.zeros_like(combine_mask[info["slice"]][0])
-        mask_temp[bbox[0]:bbox[1], bbox[2]:bbox[3]]=mask[info["slice"]][0]
-        # mask+abs(mask-mask_pre)
-        mask_abs = torch.abs(mask_temp - combine_mask[info["slice"]][0])
-        combine_mask[info["slice"]][0].add_(mask_abs)
-        show_views(mask_abs, combine_mask[info["slice"]][0],mask_temp)
-        print(index,(mask_temp != combine_pre[info["slice"]][0]).sum())
+        # mask to 512*512 mask
+        mask_temp = np.zeros_like(combine_mask[info["slice"]][0], dtype=np.uint8)
+        # print(info["slice"], bbox)
+        # show_views(image[index][0], mask[index][0])
+        # print(bbox,mask_temp.shape, mask.shape, mask_temp[bbox[0]:bbox[1], bbox[2]:bbox[3]].shape)
+        mask_temp[bbox[0]:bbox[1], bbox[2]:bbox[3]] = mask[index].cpu()
+        combine_mask[info["slice"]][0] = cv2.bitwise_or(combine_mask[info["slice"]][0], mask_temp)
+        # show_views(combine_mask[info["slice"]][0], mask_temp,
+        #            image_title=["combine_mask", "mask_temp"])
 #         break
-    return combine_mask
+    return torch.from_numpy(combine_mask).to(config.device)
 
 
 if __name__ == "__main__":
@@ -456,17 +467,22 @@ if __name__ == "__main__":
     var_dataset = BaseDataset(config.kits_val_image_path, config.kits_val_mask_path,
                               is_val=True)
     crop_infos = read_image_json(config.image_json)
-    print(var_dataset.ids[0])
+    print(var_dataset.ids[1])
     from utils.visualization import show_views
-    crop_info = crop_infos[var_dataset.ids[0]]
+    crop_info = crop_infos[var_dataset.ids[1]]
     # print(crop_info)
     image = var_dataset[1]["image"]
     mask = var_dataset[1]["mask"]
     show_views(image[0][0], mask[0][0])
     crop_image, crop_mask = get_cube(image, mask, crop_info)
-    print(crop_image.shape, crop_mask.shape)
 
-    show_views(crop_mask[1][0], crop_image[1][0])
+    show_views(crop_mask[0][0], crop_image[0][0])
     combine_pre = combine_image(crop_mask, image.shape, crop_info)
+    # show_views(mask[1][0], combine_pre[1][0])
+    # print((mask[1][0] != combine_pre[1][0]).sum())
+    print(mask.shape, combine_pre.shape)
+    for i in range(combine_pre.shape[0]):
+        if (mask[i][0] != combine_pre[i][0]).sum() != 0:
+            print(i)
+            show_views(mask[i][0], combine_pre[i][0])
     print((mask != combine_pre).sum())
-
