@@ -24,6 +24,7 @@ from configuration.labels import KITS_HEC_LABEL_MAPPING, HEC_NAME_LIST, HEC_SD_T
 sys.path.append("../")
 from threading import Thread
 import cv2
+from loss.loss_function import Focal_loss, DiceLoss
 
 
 class Validation:
@@ -63,12 +64,16 @@ class Validation:
         # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
         # visualization
         # writer = SummaryWriter()
-        writer = SummaryWriter(comment=f'{config.network}_{config.optimizer}')
+        summary_title = f'{config.network}_{config.optimizer}'
+        if config.weight:
+            summary_title = f'{config.network}_{config.optimizer}_weight'
+        writer = SummaryWriter(comment=summary_title)
 
         if config.loss == 0:
             # weights = torch.FloatTensor(config.entropy_weight).to(device=config.device)
             # criterion = nn.CrossEntropyLoss(weight=weights)
-            criterion = nn.CrossEntropyLoss()
+            # criterion = nn.CrossEntropyLoss()
+            criterion = DiceLoss()
         else:
             criterion = nn.BCEWithLogitsLoss()
         # begin training
@@ -85,13 +90,16 @@ class Validation:
                     masks = batch['mask']
 
                     imgs = imgs.to(device=config.device, dtype=torch.float32)
+                    # when use softmax type have to
                     mask_type = torch.float32 if config.loss == 1 else torch.long
                     true_masks = masks.to(device=config.device, dtype=mask_type)
-                    if config.loss == 0:
+                    if config.loss == 1:
                         true_masks = true_masks.squeeze(dim=1)
                     masks_pred = model(imgs)
                     # print("train", true_masks.shape, masks_pred.shape)
                     # print(imgs.max())
+                    # focal loss or other
+                    # masks_pred = masks_pred.argmax(dim=1)
                     loss = criterion(masks_pred, true_masks)
                     epoch_loss += loss
                     # print(loss)
@@ -116,13 +124,13 @@ class Validation:
                 # valuation Loss
                 # print("val")
                 val_score, val_dice_sds = self.eval_net(model, config)
-                writer.add_scalar(f'{config.network}/learning_rate', optimizer.param_groups[0]['lr'], global_step)
+                writer.add_scalar(f'{summary_title}/learning_rate', optimizer.param_groups[0]['lr'], global_step)
                 disc_mean, sds_mean = np.mean(val_dice_sds, axis=0)
-                writer.add_scalar(f'{config.network}/Loss/train', epoch_loss.item()/len(train_loader), global_step)
+                writer.add_scalar(f'{summary_title}/Loss/train', epoch_loss.item()/len(train_loader), global_step)
 
-                writer.add_scalars(f'{config.network}/disc_sds', {"disc": disc_mean, "sds": sds_mean},
+                writer.add_scalars(f'{summary_title}/disc_sds', {"disc": disc_mean, "sds": sds_mean},
                                    global_step)
-                writer.add_scalars(f'{config.network}/per_disc_sds',
+                writer.add_scalars(f'{summary_title}/per_disc_sds',
                                    {"class1_disc": val_dice_sds[0][0], "class1_sds": val_dice_sds[0][1],
                                     "class2_disc": val_dice_sds[1][0], "class2_sds": val_dice_sds[1][1],
                                     "class3_disc": val_dice_sds[2][0], "class3_sds": val_dice_sds[2][1]},
@@ -131,17 +139,18 @@ class Validation:
                 # get kits ds and sd
                 # val_ds_sd = self.kits_valuate(model, val_loader, config)
                 logging.info('Validation cross entropy: {}'.format(val_score))
-                logging.info('Validation mean disc: {}'.format(val_dice_sds))
+                logging.info('Validation mean disc: \n {}'.format(val_dice_sds))
 
-                writer.add_scalar(f'{config.network}/Loss/test', val_score, global_step)
+                writer.add_scalar(f'{summary_title}/Loss/test', val_score, global_step)
             # save model
             try:
-                os.mkdir(f"{config.network}_{config.optimizer}")
+
+                os.mkdir(summary_title)
                 logging.info('Created checkpoint directory')
             except OSError:
                 pass
             torch.save(model.state_dict(),
-                       f"{config.network}_{config.optimizer}/CP_epoch{epoch + 1}.pth")
+                       f"{summary_title}/CP_epoch{epoch + 1}.pth")
             logging.info(f'Checkpoint {epoch + 1} saved !')
 
         writer.close()

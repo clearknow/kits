@@ -4,5 +4,6 @@ checkpoints/*
 UNet*/*
 Res*/*
 Unet*/*
+Swin*/*
 */runs/*
 job*

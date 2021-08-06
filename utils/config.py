@@ -71,6 +71,7 @@ class Config(BaseConfig):
         self.optimizer = "Adam"
         self.pro_pre = True
         # load model file path
+        self.weight = None
 
 
 config = Config()

@@ -20,7 +20,8 @@ if __name__ == "__main__":
     validation = Validation()
     msg = Msg()
     # Unet_smp
-    config.network = "ResNetUNet_second"
+    config.network = "SwinUnet"
+    config.weight = True
 
     config.optimizer = "Adam"
     config.second_network = True

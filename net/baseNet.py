@@ -7,6 +7,8 @@ from utils.config import Config
 import segmentation_models_pytorch as smp
 from net.Unet import Res_UNet, UNet_2_skip
 from net.ResUnet import ResNetUNet
+from net.vision_transformer import SwinUnet
+
 
 # 保持slice的维度不变
 class UNet_3d(nn.Module):
@@ -131,6 +133,8 @@ def choose_net(network, in_channel=1, classes=4):
             "ResNetUNet_2_skip" or network == "ResNetUNet_second" or \
             network == "ResNetUNet_second_no_weight":
         return ResNetUNet(in_channel=in_channel, classes=classes)
+    elif network == "SwinUnet":
+        return SwinUnet(num_classes=classes)
 
 
 if __name__ == "__main__":
