@@ -21,9 +21,10 @@ if __name__ == "__main__":
     msg = Msg()
     # Unet_smp
     config.network = "SwinUnet"
-    config.weight = True
+    # config.weight = True
+    config.loss = 0 # WD
 
-    config.optimizer = "Adam"
+    config.optimizer = "1c_Adam"
     config.second_network = True
     if config.second_network:
         config.image_root = config.image_crop

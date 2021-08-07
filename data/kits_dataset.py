@@ -14,6 +14,7 @@ import cv2
 # warnings.filterwarnings("ignore")
 from utils.convert import convert
 from sklearn.model_selection import KFold
+import torchvision.transforms as transforms
 
 
 class KitsDataset(Dataset):
@@ -96,4 +97,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+    data_hvflip = transforms.Compose([
+        transforms.RandomHorizontalFlip(1),
+    ])
 

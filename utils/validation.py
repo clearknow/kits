@@ -25,7 +25,7 @@ sys.path.append("../")
 from threading import Thread
 import cv2
 from loss.loss_function import Focal_loss, DiceLoss
-
+from generalized_wasserstein_dice_loss.loss import GeneralizedWassersteinDiceLoss
 
 class Validation:
     def __init__(self):
@@ -64,7 +64,7 @@ class Validation:
         # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
         # visualization
         # writer = SummaryWriter()
-        summary_title = f'{config.network}_{config.optimizer}'
+        summary_title = f'{config.network}_{config.optimizer}_{config.loss}'
         if config.weight:
             summary_title = f'{config.network}_{config.optimizer}_weight'
         writer = SummaryWriter(comment=summary_title)
@@ -72,8 +72,7 @@ class Validation:
         if config.loss == 0:
             # weights = torch.FloatTensor(config.entropy_weight).to(device=config.device)
             # criterion = nn.CrossEntropyLoss(weight=weights)
-            # criterion = nn.CrossEntropyLoss()
-            criterion = DiceLoss()
+            criterion = nn.CrossEntropyLoss()
         else:
             criterion = nn.BCEWithLogitsLoss()
         # begin training
@@ -93,7 +92,7 @@ class Validation:
                     # when use softmax type have to
                     mask_type = torch.float32 if config.loss == 1 else torch.long
                     true_masks = masks.to(device=config.device, dtype=mask_type)
-                    if config.loss == 1:
+                    if config.loss == 0:
                         true_masks = true_masks.squeeze(dim=1)
                     masks_pred = model(imgs)
                     # print("train", true_masks.shape, masks_pred.shape)

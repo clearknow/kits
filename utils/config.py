@@ -39,7 +39,7 @@ class Config(BaseConfig):
         self.spacing = (3.22, 1.62, 1.62)
         self.entropy_weight = [1, 4, 8, 8]
         # dice loss
-        # self.loss = 1
+        self.loss = 0
         # artery image
         self.artery_image_root = "/public/home/cxiao/Study/data/artery/image"
         self.artery_mask_root = "/public/home/cxiao/Study/data/artery/mask/"

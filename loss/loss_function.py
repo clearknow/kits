@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from utils.config import config
+
 
 class Focal_loss(nn.Module):
     def __init__(self, gamma=0, alpha=None, size_average=True):
@@ -86,11 +88,11 @@ class DiceLoss(nn.Module):
     def forward(self, input, target):
         """
             input tesor of shape = (N, C, H, W)
-            target tensor of shape = (N, H, W)
+            target tensor of shape = (N, c,H, W)
         """
         # 先将 target 进行 one-hot 处理，转换为 (N, C, H, W)
         nclass = input.shape[1]
-        target = make_one_hot(target.long(), nclass)
+        target = make_one_hot(target.long(), nclass).to(device=config.device)
 
         assert input.shape == target.shape, "predict & target shape do not match"
 

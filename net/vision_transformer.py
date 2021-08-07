@@ -30,10 +30,10 @@ class SwinUnet(nn.Module):
         self.img_size = img_size
         self.swin_unet = SwinTransformerSys(img_size=img_size,
                                             patch_size=4,
-                                            in_chans=1,
+                                            in_chans=3,
                                             num_classes=self.num_classes,
                                             embed_dim=96,
-                                            depths=[2, 2, 6, 2],
+                                            depths=[2, 2, 2, 2],
                                             num_heads=[3, 6, 12, 24],
                                             window_size=8,
                                             mlp_ratio=4.,
@@ -45,6 +45,8 @@ class SwinUnet(nn.Module):
                                             patch_norm=True)
 
     def forward(self, x):
+        if x.size()[1] == 1:
+            x = x.repeat(1,3,1,1)
         logits = self.swin_unet(x)
         return logits
 
