@@ -29,7 +29,7 @@ class SwinUnet(nn.Module):
         self.zero_head = zero_head
         self.img_size = img_size
         self.swin_unet = SwinTransformerSys(img_size=img_size,
-                                            patch_size=4,
+                                            patch_size=8,
                                             in_chans=3,
                                             num_classes=self.num_classes,
                                             embed_dim=96,

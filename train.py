@@ -24,7 +24,7 @@ if __name__ == "__main__":
     # config.weight = True
     config.loss = 0 # WD
 
-    config.optimizer = "1c_Adam"
+    config.optimizer = "3c_8p_Adam"
     config.second_network = True
     if config.second_network:
         config.image_root = config.image_crop

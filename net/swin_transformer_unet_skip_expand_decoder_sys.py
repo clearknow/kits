@@ -578,8 +578,8 @@ class SwinTransformerSys(nn.Module):
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False
     """
 
-    def __init__(self, img_size=256, patch_size=4, in_chans=3, num_classes=1000,
-                 embed_dim=96, depths=[2, 2, 2, 2], depths_decoder=[1, 2, 2, 2], num_heads=[3, 6, 12, 24],
+    def __init__(self, img_size=256, patch_size=4, in_chans=3, num_classes=4,
+                 embed_dim=96, depths=[2, 2, 2, 2], depths_decoder=[1, 2, 2, 2, 2], num_heads=[3, 6, 12, 24],
                  window_size=8, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
@@ -718,7 +718,8 @@ class SwinTransformerSys(nn.Module):
             if inx == 0:
                 x = layer_up(x)
             else:
-                x = torch.cat([x, x_downsample[3 - inx]], -1)
+                # print(x.shape, x_downsample[4 - inx].shape)
+                x = torch.cat([x, x_downsample[self.num_layers - 1 - inx]], -1)
                 x = self.concat_back_dim[inx](x)
                 x = layer_up(x)
 
