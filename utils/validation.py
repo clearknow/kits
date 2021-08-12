@@ -27,6 +27,7 @@ import cv2
 from loss.loss_function import Focal_loss, DiceLoss
 from generalized_wasserstein_dice_loss.loss import GeneralizedWassersteinDiceLoss
 
+
 class Validation:
     def __init__(self):
         pass
@@ -41,7 +42,7 @@ class Validation:
         msg = Msg()
         msg.training_conf(config)
         # dataset
-        dataset = BaseDataset(config.image_root, config.mask_root, pre_pro=config.pro_pre)
+        dataset = BaseDataset(config.image_root, config.mask_root, transform=3, pre_pro=config.pro_pre)
         if config.second_network:
             var_dataset = BaseDataset(config.val_image_crop, config.val_mask_crop,
                                       pre_pro=config.pro_pre)
@@ -58,10 +59,12 @@ class Validation:
 
         # training
         # optimizer
-        optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),lr=config.lr)
+        optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.lr)
         # optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=2)
+        # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=1)
+        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[10, config.epochs-10], gamma=0.1)
         # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
+        # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
         # visualization
         # writer = SummaryWriter()
         summary_title = f'{config.network}_{config.optimizer}_{config.loss}'
@@ -143,7 +146,6 @@ class Validation:
                 writer.add_scalar(f'{summary_title}/Loss/test', val_score, global_step)
             # save model
             try:
-
                 os.mkdir(summary_title)
                 logging.info('Created checkpoint directory')
             except OSError:
@@ -172,7 +174,7 @@ class Validation:
             # var_loader = DataLoader(var_dataset, batch_size=config.batch_size,
             #                         shuffle=True, num_workers=config.num_workers)
         else:
-            var_dataset = BaseDataset(config.valxcd_image_path, config.val_mask_path,
+            var_dataset = BaseDataset(config.val_image_path, config.val_mask_path,
                                       is_val=True)
         n_val = len(var_dataset)  # the number of batch
 
@@ -429,14 +431,15 @@ def get_cube(image, mask, crop_info: dict):
     config = Config()
     image_crop = torch.zeros((len(crop_info), 1, 256, 256)).to(config.device)
     mask_crop = torch.zeros((len(crop_info), 1, 256, 256)).to(config.device)
+    # print(image.shape, mask.shape, image_crop.shape)
 
     for index in range(len(crop_info)):
         info = crop_info[index]
         bbox = info["bbox"]
         # print(info["slice"], bbox)
-
-        image_crop[index][0].add_(image[info["slice"]][0][bbox[0]:bbox[1], bbox[2]:bbox[3]])
-        mask_crop[index][0].add_(mask[info["slice"]][0][bbox[0]:bbox[1], bbox[2]:bbox[3]])
+        # print(image_crop[index][0].shape, image[int(info["slice"])][0][bbox[0]:bbox[1], bbox[2]:bbox[3]].shape, index)
+        image_crop[index][0].add_(image[int(info["slice"])][0][bbox[0]:bbox[1], bbox[2]:bbox[3]])
+        mask_crop[index][0].add_(mask[int(info["slice"])][0][bbox[0]:bbox[1], bbox[2]:bbox[3]])
 
     return image_crop, mask_crop.type(torch.long)
 
@@ -449,7 +452,12 @@ def combine_image(mask, origin_shape, crop_info):
     :return:
     """
     config = Config()
+    origin_shape = list(origin_shape)
+    if len(origin_shape) == 3:
+        origin_shape.insert(1, 1)
+    print(origin_shape)
     combine_mask = np.zeros(origin_shape, np.uint8)
+    print(combine_mask.shape)
     # print(mask.shape, origin_shape)
     assert len(mask.shape) == 3, "mask shape is not 3"
     # print(len(crop_info), len(mask))

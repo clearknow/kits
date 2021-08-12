@@ -123,18 +123,19 @@ class OutConv(nn.Module):
         return self.feature(x)
 
 
-def choose_net(network, in_channel=1, classes=4):
+def choose_net(network, in_channel=1, classes=4, img_size=256):
     if network == "Unet_smp":
         return smp.Unet('resnet34', classes=classes, in_channels=in_channel)
     elif network == "Unet":
         # cant use
         return Res_UNet(n_channels=in_channel, classes=classes)
+    elif network == "SwinUnet":
+        return SwinUnet(num_classes=classes, img_size=img_size)
     elif network == "ResNetUNet" or network == "ResNetUNet_no_weight" or\
             "ResNetUNet_2_skip" or network == "ResNetUNet_second" or \
             network == "ResNetUNet_second_no_weight":
         return ResNetUNet(in_channel=in_channel, classes=classes)
-    elif network == "SwinUnet":
-        return SwinUnet(num_classes=classes)
+
 
 
 if __name__ == "__main__":

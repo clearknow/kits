@@ -6,16 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-
-'''
-    display 3 views  
-    @:param image :origin image
-            mask : annotation image
-            prob : predict image 
-            camp : color 
-'''
-
-
 def show_views(image, mask, prob=None, cmap=None, image_title=["image", "mask", "predict"]):
     """
     show 2 or 3 image image
@@ -36,19 +26,22 @@ def show_views(image, mask, prob=None, cmap=None, image_title=["image", "mask", 
     for i in range(0, counter):
         ax1 = plt.subplot(1, counter, i+1)
         ax1.set_title(image_title[i])
+        ax1.axis("off")
         ax1.imshow(image_list[i], cmap=cmap)
-
+    plt.axis("off")
     plt.show()
 
 
 def show_single_view(image, cmap=None):
     plt.imshow(image, cmap=cmap)
+    plt.axis("off")
     plt.show()
 
 
 def show_image_hist(image):
     plt.hist(image)
     plt.title("histogram")
+    plt.axis("off")
     plt.show()
 
 

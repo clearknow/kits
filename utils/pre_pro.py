@@ -1,16 +1,19 @@
 import numpy as np
 import cv2
 import sys
+from data.BasisDataset import BaseDataset
 sys.path.append("../")
+from utils.data_prepare_3d import DataPrepare3D
 
 from utils.visualization import show_image_hist, show_single_view
 import SimpleITK as sitk
 from utils.config import config
 import json
 import os
-
+from threading import Thread
 from matplotlib import pyplot as plt
-
+from utils.convert import Convert
+from itertools import groupby
 
 # normalize HU to [1,255]
 def normalize(image):
@@ -42,12 +45,12 @@ def resize_image_itk(itkimage, resamplemethod=sitk.sitkNearestNeighbor):
     originSpacing = itkimage.GetSpacing()
     newSize = np.array(config.new_size, float)
     factor = originSize / newSize
-    newSpacing = originSpacing * factor
-    # new_spacing = config.spacing
+    # newSpacing = originSpacing * factor
+    new_spacing = config.spacing
     newSize = newSize.astype(np.int)  # spacing肯定不能是整数
     resampler.SetReferenceImage(itkimage)  # 需要重新采样的目标图像
     resampler.SetSize(newSize.tolist())
-    resampler.SetOutputSpacing(newSpacing.tolist())
+    resampler.SetOutputSpacing(list(new_spacing))
     resampler.SetTransform(sitk.Transform(3, sitk.sitkIdentity))
     resampler.SetInterpolator(resamplemethod)
     itkimgResampled = resampler.Execute(itkimage)  # 得到重新采样后的图像
@@ -207,31 +210,31 @@ def get_kits():
 
     # all patients gz files
     for patient, patient_id in zip(os.listdir(data_path), range(len(os.listdir(data_path)))):
-        image_k_fold = os.path.join(config.kits_image_root, str(patient_id % 5))
-        mask_k_fold = os.path.join(config.kits_mask_root, str(patient_id % 5))
-
-        if not os.path.exists(image_k_fold):
-            os.makedirs(image_k_fold)
-        if not os.path.exists(mask_k_fold):
-            os.makedirs(mask_k_fold)
+        # image_k_fold = os.path.join(config.kits_image_root, str(patient_id % 5))
+        # mask_k_fold = os.path.join(config.kits_mask_root, str(patient_id % 5))
+        #
+        # if not os.path.exists(image_k_fold):
+        #     os.makedirs(image_k_fold)
+        # if not os.path.exists(mask_k_fold):
+        #     os.makedirs(mask_k_fold)
         image_case_path = os.path.join(data_path, patient, "imaging.nii.gz")
         mask_case_path = os.path.join(data_path, patient, "aggregated_MAJ_seg.nii.gz")
         # print(mask_case_path)
         images = sitk.ReadImage(image_case_path)
         masks = sitk.ReadImage(mask_case_path)
-        # resample
-
-        resample_image = resize_image_itk(images)
-        resample_mask = resize_image_itk(masks)
+        # # resample
+        #
+        # resample_image = resize_image_itk(images)
+        # resample_mask = resize_image_itk(masks)
         # resample_image = sitk.GetArrayFromImage(resample_image)
         # resample_mask = sitk.GetArrayFromImage(resample_mask)
         # nii为存储路径
-        image_save_path = os.path.join(image_k_fold, patient+".nii.gz")
-        mask_save_path = os.path.join(mask_k_fold, patient+".nii.gz")
+        image_save_path = os.path.join(config.kits_image_root, patient+".nii.gz")
+        mask_save_path = os.path.join(config.kits_mask_root, patient+".nii.gz")
         print(image_case_path)
 
-        sitk.WriteImage(resample_image, image_save_path)
-        sitk.WriteImage(resample_mask, mask_save_path)
+        sitk.WriteImage(images, image_save_path)
+        sitk.WriteImage(masks, mask_save_path)
 
 
 def test():
@@ -247,12 +250,12 @@ def test():
 
 
 # kits 2d
-def get_kits_2d():
+def get_kits_2d(begin_case=0, final_case=270):
     data_path = "/public/datasets/kidney/kits21/kits21/data"
 
     # all patients gz files
-    images_path = sorted(os.listdir(data_path))[270:]
-    for patient, patient_id in zip(images_path, range(270,300)):
+    images_path = sorted(os.listdir(data_path))[begin_case:final_case]
+    for patient, patient_id in zip(images_path, range(begin_case, final_case)):
         image_fold = os.path.join(config.kits_image_root)
         mask_fold = os.path.join(config.kits_mask_root)
 
@@ -272,37 +275,186 @@ def get_kits_2d():
         images = sitk.GetArrayFromImage(images).transpose((2, 1, 0))
         masks = sitk.GetArrayFromImage(masks).transpose((2, 1, 0))
         print(images.shape, patient)
-        # if images.shape[1] != images.shape[2]:
-        #     print(images.shape, patient)
+        if images.shape[1] != images.shape[2]:
+            print(images.shape, patient)
         # nonzero = np.nonzero(masks)[0]
         # max_index = nonzero.max()
         # min_index = nonzero.min()
         # nonzero_mask = masks[min_index:max_index, :, :]
         # nonzero_image = images[min_index:max_index, :, :]
         # print(images.shape)
-        # # nii为存储路径
-        # for index in range(len(nonzero_mask)):
-        #     image_save_path = os.path.join(image_fold, f"{patient}_{index+min_index}.npy")
-        #     mask_save_path = os.path.join(mask_fold, f"{patient}_{index+min_index}.npy")
-        #     np.save(mask_save_path, nonzero_mask[index])
-        #     np.save(image_save_path, nonzero_image[index])
-        #     # exit(-1)
+        # nii为存储路径ss
+        for index in range(len(masks)):
+            image_save_path = os.path.join(image_fold, f"{patient}_{index}.npy")
+            mask_save_path = os.path.join(mask_fold, f"{patient}_{index}.npy")
+            np.save(mask_save_path, masks[index])
+            np.save(image_save_path, images[index])
+            # exit(-1)
+
+
+def calculate_classes(dataset):
+    one = 1
+    two = 2
+    three = 3
+    counter = {"1": 0, "2":0, "3":0}
+    for i in range(len(dataset)):
+        mask = np.array(dataset[i]["mask"].squeeze(1))
+        print(mask.shape)
+        for j in range(len(mask)):
+            if one in mask[j]:
+                counter["1"] += 1
+            if two in mask[j]:
+                counter["2"] += 1
+            if three in mask[j]:
+                counter["3"] += 1
+
+    return counter
+
+
+def calculate_all():
+    data_path = "/public/datasets/kidney/kits21/kits21/data"
+
+    # all patients gz files
+    images_path = sorted(os.listdir(data_path))
+    one = 1
+    two = 2
+    three = 3
+    counter = {"1": 0, "2": 0, "3": 0,"all":0}
+    case = {"1": 0, "2": 0, "3": 0}
+    tumor = list()
+    for patient, patient_id in zip(images_path, range(0, 300)):
+        image_fold = os.path.join(config.kits_image_root)
+        mask_fold = os.path.join(config.kits_mask_root)
+
+        if not os.path.exists(image_fold):
+            os.makedirs(mask_fold)
+        if not os.path.exists(image_fold):
+            os.makedirs(mask_fold)
+        image_case_path = os.path.join(data_path, patient, "imaging.nii.gz")
+        mask_case_path = os.path.join(data_path, patient, "aggregated_MAJ_seg.nii.gz")
+      #     images_path.append(image_case_path)
+        # print(sorted(images_path)[])
+        # print(mask_case_path)
+        images = sitk.ReadImage(image_case_path)
+        masks = sitk.ReadImage(mask_case_path)
+        # resample
+
+        images = sitk.GetArrayFromImage(images).transpose((2, 1, 0))
+        masks = sitk.GetArrayFromImage(masks).transpose((2, 1, 0))
+        if images.shape[1] != images.shape[2]:
+            print(images.shape, patient)
+            continue
+        nonzero = np.nonzero(masks)[0]
+        max_index = nonzero.max()
+        min_index = nonzero.min()
+        nonzero_mask = np.array(masks[min_index:max_index, :, :])
+        counter["all"] += len(nonzero_mask)
+        # print(nonzero_mask.shape)
+        for j in range(len(nonzero_mask)):
+            if one in nonzero_mask[j]:
+                counter["1"] += 1
+            if two in nonzero_mask[j]:
+                counter["2"] += 1
+            if three in nonzero_mask[j]:
+                counter["3"] += 1
+        if counter["1"] > 0:
+            case["1"] += 1
+        if counter["2"] > 0:
+            case["2"] += 1
+        if counter["3"] > 0:
+            case["3"] += 1
+            tumor.append(patient_id)
+
+        return counter, case, tumor
+
+
+class Metrics_thread(Thread):
+    def __init__(self, begin_case, final_case):
+        Thread.__init__(self)
+        self.result = 0
+        self.begin_case = begin_case
+        self.final_case = final_case
+
+    def run(self):
+        # print("start")
+        copy_cases(self.begin_case, self.final_case)
+
+
+def get_cases_spacing(file_path, target_type=".nii.gz"):
+    """
+
+    :param file_path: case or cube path
+    :param target_type: ".nii.gz"
+    :return: dict {"filename":spacing}
+    """
+    cases_spacing = dict()
+    for case_name in os.listdir(file_path):
+        case_path = os.path.join(file_path, case_name)
+        if case_path.endswith(".nii.gz"):
+            _, spacing = Convert.nii_2_np(case_path)
+            cases_spacing[case_name] = spacing.tolist()
+
+    return cases_spacing
+
+
+def calculate_distribute(lst, intervals=5):
+    dic = dict()
+    for k, g in groupby(lst, key=lambda x: (x - 1) // intervals):
+        dic['{}-{}'.format(k * 10 + 1, (k + 1) * intervals)] = len(list(g))
+    return dic
+
+
+def copy_cases(begin_case=0, final_case=270):
+    print("kits")
+    data_path = "/public/datasets/kidney/kits21/kits21/data"
+
+    # all patients gz files
+    for patient, patient_id in zip(os.listdir(data_path), range(len(os.listdir(data_path)))):
+        # image_k_fold = os.path.join(config.kits_image_root, str(patient_id % 5))
+        # mask_k_fold = os.path.join(config.kits_mask_root, str(patient_id % 5))
+        #
+        # if not os.path.exists(image_k_fold):
+        #     os.makedirs(image_k_fold)
+        # if not os.path.exists(mask_k_fold):
+        #     os.makedirs(mask_k_fold)
+        image_case_path = os.path.join(data_path, patient, "imaging.nii.gz")
+        mask_case_path = os.path.join(data_path, patient, "aggregated_MAJ_seg.nii.gz")
+        image_save_path = os.path.join(config.image_3d_path, patient+".nii.gz")
+        mask_save_path = os.path.join(config.mask_3d_path, patient+".nii.gz")
+
+        os.system(f'cp {image_case_path} {image_save_path}')
+        os.system(f'cp {mask_case_path} {mask_save_path}')
+        print(image_save_path)
+
+
+def get_case_name(cases_path):
+    # print("kits")
+    data_path = "/public/datasets/kidney/kits21/kits21/data"
+
+    # all patients gz files
+    cases_list = list()
+    for patient in os.listdir(config.mask_3d_path):
+        if patient.endswith(".nii.gz"):
+            patient_id = patient.split(".")[0]
+            # print(patient_id)
+            cases_list.append(patient_id)
+    return {"cases_name": cases_list}
+
+
+def get_all_kits():
+    case_thread = list()
+    for i in range(10):
+        case_thread.append(Metrics_thread(i*30, 30*(i+1)))
+        case_thread[i].start()
+    for i in range(10):
+        case_thread[i].join()
+        print("end")
 
 
 if __name__ == "__main__":
-
-    # test()
-    # exit(-1)
-    organ_type = input("input deal data type:")
-
-    if organ_type == "artery":
-        get_artery()
-    elif organ_type == "kidney":
-        # 修改比赛数据归一相同大小
-        get_kits_2d()
-    else:
-        print("error")
-
-    print("end")
-
+    image = config.image_3d_path+"/case_00160.nii.gz"
+    mask = config.mask_3d_path
+    result = get_case_name(config.image_3d_path)
+    DataPrepare3D.info_to_json(config.case_name_json, result)
+    # get_all_kits()
 

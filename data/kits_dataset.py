@@ -18,12 +18,13 @@ import torchvision.transforms as transforms
 
 
 class KitsDataset(Dataset):
-    def __init__(self, image_root, mask_root):
+    def __init__(self, image_root, mask_root, pre_process=True):
         super(KitsDataset, self).__init__()
         self.image_root = image_root
         self.mask_root = mask_root
         # file name
         self.ids = self.get_file(image_root)
+        self.pre_process = pre_process
 
     def __len__(self):
         return len(self.ids)
@@ -31,7 +32,7 @@ class KitsDataset(Dataset):
     def __getitem__(self, item):
         """
         :param item:
-        :return: 5D (c,s,h,w)
+        :return: 4D (c,s,h,w)
         """
         idx = self.ids[item]
         image_root = self.image_root
@@ -45,11 +46,13 @@ class KitsDataset(Dataset):
         image_np, space = convert.nii_2_np(image_file)
         mask_np, space = convert.nii_2_np(mask_file)
         # print(space)
-        non_zero = np.nonzero(mask_np)[0]
-        max_index = non_zero.max()
-        min_index = non_zero.min()
-        mask_numpy = np.expand_dims(mask_np[min_index:max_index], axis=0)
-        image_numpy = np.expand_dims(self.preprocess(image_np)[min_index:max_index], axis=0)
+        # non_zero = np.nonzero(mask_np)[0]
+        # max_index = non_zero.max()
+        # min_index = non_zero.min()
+        mask_numpy = np.expand_dims(mask_np, axis=0)
+        if self.pre_process:
+            image_np = self.preprocess(image_np)
+        image_numpy = np.expand_dims(image_np, axis=0)
 
         # bug xcd the shape w and h dont same
         return {
@@ -82,22 +85,24 @@ class KitsDataset(Dataset):
         image = (image - 101) / 76.9
         return image
 
+    def transforms(self):
+        flip = transforms.Compose([
+            transforms.RandomHorizontalFlip(1),
+        ])
+
 
 def main():
-    image_root = config.image_root
-    mask_root = config.mask_root
+    image_root = config.image_3d_path
+    mask_root = config.mask_3d_path
     base_dataset = KitsDataset(image_root, mask_root)
     # print(len(base_dataset.ids))
-    index = 50
+    index = 10
     images = base_dataset[index]
-    show_views(images["image"][0][50], images["mask"][0][50], cmap="gray")
+    show_views(images["image"][0][index], images["mask"][0][index], cmap="gray")
 
     # print(images["image"].max(), len(base_dataset))
 
 
 if __name__ == "__main__":
     main()
-    data_hvflip = transforms.Compose([
-        transforms.RandomHorizontalFlip(1),
-    ])
 

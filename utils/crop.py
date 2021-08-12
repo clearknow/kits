@@ -16,7 +16,7 @@ import os
 
 
 # 裁剪ROI
-def crop(image, mask, contour)-> list:
+def crop(image, mask, contour) -> list:
     """
     :param image: tensor
     :param mask:
@@ -75,6 +75,8 @@ def save_boundary(boundary, file_name, fin):
 
 # slice y, x min,max
 def get_boundary(mask):
+    if len(mask.shape) == 3:
+        mask = mask.squeeze()
     mask = np.array(mask).astype(np.uint8)
     mask[mask > 1] = 1
     mask_copy = mask.copy()
@@ -129,6 +131,24 @@ class MyEncoder(json.JSONEncoder):
             return super(json.JetEncoder, self).default(obj)
 
 
+def get_crop_info(image, mask):
+    crop_infos = list()
+    for ct_slice in range(len(mask)):
+        contours = get_boundary(mask[ct_slice])
+        # print(idx, len(contours))
+        for i in range(len(contours)):
+            crop_info = dict()
+            bbox = crop(image[ct_slice], mask[ct_slice], contours[i])
+            # print(i)
+            crop_info["slice"] = ct_slice
+            crop_info["patch_count"] = i
+            crop_info["bbox"] = list(bbox)
+            # print(crop_info)
+            crop_infos.append(crop_info)
+
+    return crop_infos
+
+
 def get_bbox():
     base_dataset = BaseDataset(image_root, mask_root, is_val=is_val)
     print((len(base_dataset)))
@@ -140,19 +160,7 @@ def get_bbox():
             # 1. 2维数据时会存在多个patch，无法合并为一个3d cube
             mask = base_dataset[index]['mask'].squeeze()
             image = base_dataset[index]['image'].squeeze()
-            crop_infos = list()
-            for ct_slice in range(len(mask)):
-                contours = get_boundary(mask[ct_slice])
-                print(idx, len(contours))
-                for i in range(len(contours)):
-                    crop_info = dict()
-                    bbox = crop(image[ct_slice], mask[ct_slice], contours[i])
-                    # print(i)
-                    crop_info["slice"] = ct_slice
-                    crop_info["patch_count"] = i
-                    crop_info["bbox"] = list(bbox)
-                    # print(crop_info)
-                    crop_infos.append(crop_info)
+            crop_infos = get_crop_info(idx, image, mask)
             cases[idx] = crop_infos
 
         else:

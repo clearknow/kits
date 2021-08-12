@@ -3,6 +3,7 @@
     author: ChuDa xiao
 """
 import torch
+import os
 
 
 class BaseConfig:
@@ -24,6 +25,7 @@ class BaseConfig:
         self.save_path = "/public/datasets/lung/predict/"
         # load model file path
         self.pre_model_path = ""
+
         # resample CT image shape ()
         self.new_size = (128, 256, 256)
 
@@ -41,21 +43,26 @@ class Config(BaseConfig):
         # dice loss
         self.loss = 0
         # artery image
+        self.root_path = "/public/home/cxiao/Study/data/kits21"
         self.artery_image_root = "/public/home/cxiao/Study/data/artery/image"
         self.artery_mask_root = "/public/home/cxiao/Study/data/artery/mask/"
         self.artery_save_path = "/public/home/cxiao/Study/data/artery/predict/"
         self.second_network = False
         # kits
-        self.kits_image_root = "/public/home/cxiao/Study/data/kits21/image_2d/"
-        self.kits_mask_root = "/public/home/cxiao/Study/data/kits21/mask_2d/"
-        self.kits_save_root = "/public/home/cxiao/Study/data/kits21/predict/"
-        self.origin_data_path = "/public/datasets/kidney/kits21/kits21/data/"
-        self.kits_val_image_path = "/public/home/cxiao/Study/data/kits21/val/image"
-        self.kits_val_mask_path = "/public/home/cxiao/Study/data/kits21/val/mask"
+        self.kits_image_root = os.path.join(self.root_path, "image_2d")
+        self.kits_mask_root = os.path.join(self.root_path, "mask_2d")
+        self.kits_save_root = os.path.join(self.root_path, "predict")
+        self.origin_data_path = os.path.join(self.root_path, "data")
+        self.image_3d_path = os.path.join(self.root_path, "image")
+        self.mask_3d_path = os.path.join(self.root_path, "mask")
+        self.mask_3D_cube = os.path.join(self.root_path, "mask_cube")
+        self.image_3D_cube = os.path.join(self.root_path, "image_cube")
+        self.kits_val_image_path = os.path.join(self.root_path, "val/image")
+        self.kits_val_mask_path = os.path.join(self.root_path, "val/mask")
 
-        self.image_crop = "/public/home/cxiao/Study/data/kits21/image_crop"
-        self.mask_crop = "/public/home/cxiao/Study/data/kits21/mask_crop"
-        self.val_image_crop = "/public/home/cxiao/Study/data/kits21/val/image_crop"
+        self.image_crop = os.path.join(self.root_path, "image_crop")
+        self.mask_crop = os.path.join(self.root_path, "mask_crop")
+        self.val_image_crop = os.path.join(self.root_path, "val/image_crop")
         self.val_mask_crop = "/public/home/cxiao/Study/data/kits21/val/mask_crop"
 
         self.image_json = "/public/home/cxiao/Study/data/kits21/val/images.json"
@@ -72,6 +79,35 @@ class Config(BaseConfig):
         self.pro_pre = True
         # load model file path
         self.weight = None
+        self.first_model = ""
+        self.second_model = ""
+        self.root_path = "/public/home/cxiao/Study/data/kits21"
+
+        self.dataset_json = ""
+        self.layer_thick = 32
+
+        self.thickness = 3.5
+        self.ct_stage = "normal"  # normal, enh_a, enh_d
+
+        self.area_size = (self.layer_thick, 384, 384)
+        self.resize_xy = (512, 512)
+
+        self.case_imgs_name = ".nii.gz"
+        self.case_mask_name = ".nii.gz"
+        self.windowing = [-135, 215]
+        self.stride = 8
+        self.trans_types = ['AffineNoTranslate', 'AffineNoTranslate', 'HorizontalFlip',
+                            'HorizontalFlip_Affine', 'HorizontalFlip_Affine']
+        self.change_label = {'2': 0, '3': 0}
+
+        self.crop_dataset_path = os.path.join(self.root_path, "crop_slice")
+        self.crop_origin_mask = os.path.join(self.crop_dataset_path, "mask")
+        self.crop_origin_image = os.path.join(self.crop_dataset_path, "image")
+        self.crop_cube_path = os.path.join(self.root_path, "kidney_cube")
+
+        self.crop_xy = (self.area_size[1], self.area_size[2])
+        self.case_name_json = os.path.join(self.root_path, "json_file/cases_name.json")
+        self.cases_spacing_json = os.path.join(self.root_path, "json_file/cases_spacing.json")
 
 
 config = Config()
