@@ -28,8 +28,8 @@ from utils.visualization import show_views
 from utils.save import Save
 
 
-def z_resample(img, spacing, re_thickness=2, re_xy=[512, 512], interpolation=cv2.INTER_NEAREST):
-    """resample img to target thickness and target xy size (64, 256, 256)[x:1, y:1, z:1]-> (32, 512, 512)[x:0.5, y:0.5, z:2]
+def z_resample(img, spacing, re_thickness=3.5, re_xy=[512, 512], interpolation=cv2.INTER_NEAREST):
+    """resample img to target thickness and target xy size (64, 256, 256)[z:1, x:1, y:1]-> (32, 512, 512)[z:2, x:0.5, y:0.5]
 
     Args:
         img : image, [z, x, y]
@@ -41,26 +41,32 @@ def z_resample(img, spacing, re_thickness=2, re_xy=[512, 512], interpolation=cv2
     Returns:
         resample_image, new_spacing
     """
+
     # RESCALE ALONG Z-AXIS.
-    resize_x = 1.0
-    resize_z = float(spacing[2]) / float(re_thickness)
-    print(resize_z, img.shape)
-    img = cv2.resize(img, dsize=None, fx=resize_x, fy=resize_z, interpolation=interpolation)
+    resize_x = float(re_xy[0] / float(img.shape[1]))
+    resize_y = float(re_xy[1] / float(img.shape[2]))
 
-    # CHANGE ORDER: (z, x, y) -> (x, y, z).
-    img = img.swapaxes(0, 2)
-    img = img.swapaxes(0, 1)
+    if resize_x != 1 or resize_y != 1:
+        # print(resize_x, resize_y)
+        img_r = []
+        for i in range(img.shape[0]):
+            img_s = img[i, :, :]
+            img_s = cv2.resize(img_s, dsize=re_xy, fx=resize_x, fy=resize_y, interpolation=interpolation)
+            print(img_s.shape)
+            img_s = np.expand_dims(img_s, axis=0)
+            img_r.append(img_s)
+        img = np.vstack(img_r)
+        # print(img.shape)
 
-    # RESCALE ALONG XY-AXIS.
-    resize_x = float(re_xy[0] / float(img.shape[0]))
-    resize_y = float(re_xy[1] / float(img.shape[1]))
-    img = cv2.resize(img, dsize=None, fx=resize_x, fy=resize_y, interpolation=interpolation)
+    # RESCALE ALONG Z-AXIS.
+    # print('img_shape__: ', img.shape)
+    r_x = 1.0
+    resize_z = round(float(spacing[0]), 2) / float(re_thickness)
+    # print(resize_z, img.shape)
+    img = cv2.resize(img, dsize=None, fx=r_x, fy=resize_z, interpolation=interpolation)
+    # print(resize_z, img.shape)
 
-    # CHANGE ORDER: (x, y, z) -> (z, x, y).
-    img = img.swapaxes(0, 2)
-    img = img.swapaxes(2, 1)
-
-    new_spacing = [spacing[0] / resize_x, spacing[1] / resize_y, re_thickness]
+    new_spacing = [re_thickness, spacing[1] / resize_x, spacing[2] / resize_y,]
 
     return img, new_spacing
 
@@ -77,6 +83,7 @@ def data_windowing(img, windowing):
     """
     img[img < windowing[0]] = windowing[0]
     img[img > windowing[1]] = windowing[1]
+    img = (img - 101) / 76.9
     return img
 
 
@@ -186,40 +193,60 @@ def crop_area(mask_arr, img_arr, kidney_info, area_size):
     :return: return cube
             mask, img, normal, crop_edge
     """
-    centroid = kidney_info['centroid']
-    loc = kidney_info['loc']
-    cent_x = int(math.ceil(centroid[1]))
-    cent_y = int(math.ceil(centroid[2]))
 
-    crop_x = int(area_size[1] / 2)
-    crop_y = int(area_size[2] / 2)
+    loc = kidney_info['loc']
+    crop_y = int(area_size[1] / 2)
+    crop_x = int(area_size[2] / 2)
     min_thickness = area_size[0]
+    x_shape = img_arr.shape[1]
+    y_shape = img_arr.shape[2]
 
     thickness = img_arr.shape[0]
     # print(img_arr.shape, mask_arr.shape)
-    x_max = loc[4]
-    x_min = loc[1]
+    x_max = loc[5]
+    x_min = loc[2]
 
-    y_max = loc[5]
-    y_min = loc[2]
-
+    y_max = loc[4]
+    y_min = loc[1]
+    # 将h与w取128*128
+    cent_x = (y_min + y_max) // 2
+    cent_y = (x_min + x_max) // 2
+    # print(hight_center, width_center)
+    x_min = cent_x - area_size[2]//2
+    x_max = cent_x + area_size[2]//2
+    y_min = cent_y - area_size[2]//2
+    y_max = cent_y + area_size[2]//2
     z_min = loc[0]
     z_max = loc[3]
+
     # print(z_min, z_max)
-    if x_max - x_min <= 2 * crop_x and y_max - y_min <= 2 * crop_y:
-        x_max = cent_x + crop_x
-        x_min = cent_x - crop_x
-        y_max = cent_y + crop_y
-        y_min = cent_y - crop_y
+    # if x_max - x_min <= 2 * crop_x and y_max - y_min <= 2 * crop_y:
+    #     x_max = cent_x + crop_x
+    #     x_min = cent_x - crop_x
+    #     y_max = cent_y + crop_y
+    #     y_min = cent_y - crop_y
+    #
+    #     normal_xy = True
+    # else:
+    #     x_max = x_max
+    #     x_min = x_min
+    #     y_max = y_max
+    #     y_min = y_min
+    #
+    #     normal_xy = False
+    if cent_y < area_size[2]//2:
+        y_min = 0
+        y_max = area_size[2]
+    if cent_y > y_shape - area_size[2]//2:
+        y_min = y_shape - area_size[2]
+        y_max = y_shape
 
-        normal_xy = True
-    else:
-        x_max = x_max
-        x_min = x_min
-        y_max = y_max
-        y_min = y_min
-
-        normal_xy = False
+    if cent_x < area_size[1]//2:
+        x_min = 0
+        x_max = area_size[1]
+    if cent_x > x_shape - area_size[1]//2:
+        x_min = x_shape - area_size[1]
+        x_max = x_shape
 
     if thickness >= min_thickness:
 
@@ -255,16 +282,16 @@ def crop_area(mask_arr, img_arr, kidney_info, area_size):
     mask = mask_arr[crop_edge[0]:crop_edge[3], crop_edge[1]:crop_edge[4], crop_edge[2]:crop_edge[5]]
     img = img_arr[crop_edge[0]:crop_edge[3], crop_edge[1]:crop_edge[4], crop_edge[2]:crop_edge[5]]
 
-    normal = True if normal_xy and normal_z else False
+    normal = True # if normal_xy and normal_z else False
     # print(z_min, z_max, thickness, min_thickness)
-    # print(img.shape, mask.shape)
     # print('----------- crop')
-    assert img.shape[0] >= min_thickness and mask.shape[0] >= min_thickness, "image or mask thickness is error"
+    assert img.shape[0] >= min_thickness and mask.shape[0] >= min_thickness, \
+        f"{img.shape},{mask.shape}, {min_thickness}  image or mask thickness is error"
 
     return mask, img, normal, crop_edge
 
 
-def save_to_nii(filepath: str, case_name: str, img, loc_info: dict, suffix):
+def save_to_nii(filepath: str, case_name: str, img, loc_info, suffix):
     """save numpy or tensor to nii
 
     :param filepath:
@@ -283,7 +310,7 @@ def save_to_nii(filepath: str, case_name: str, img, loc_info: dict, suffix):
     save_nii(case_name, img, loc_info, suffix)
 
 
-def save_nii(case_path: str, img, loc_info: dict, suffix):
+def save_nii(case_path: str, img, loc_info=[1,1,1], suffix=None):
     """ save nii helper
 
     :param case_path:
@@ -292,15 +319,16 @@ def save_nii(case_path: str, img, loc_info: dict, suffix):
     :param suffix: save case file name
     :return:
     """
+    if not os.path.exists(case_path):
+        os.mkdir(case_path)
     if type(img) is not np.ndarray:
         img = img.cpu().numpy()
 
     img = sitk.GetImageFromArray(img)
-    img.SetOrigin(loc_info['origin'])
-    img.SetDirection(loc_info['direction'])
-    img.SetSpacing(loc_info['space'])
-    crop_img_path = os.path.join(case_path, suffix)
-    sitk.WriteImage(img, crop_img_path)
+    img.SetSpacing(loc_info)
+    if suffix is not None:
+        case_path = os.path.join(case_path, suffix)
+    sitk.WriteImage(img, case_path)
 
 
 def load_nii(filepath: str, channels_last) -> dict:
@@ -461,23 +489,5 @@ if __name__ == "__main__":
     config = Config()
     image_root = config.image_3d_path
     mask_root = config.mask_3d_path
-    dataset = KitsDataset(image_root, mask_root,pre_process=False)
-    # print(len(dataset))
-    index = 1
-    masks = dataset[index]["mask"]
-    images = dataset[index]["image"]
-    # print(masks.shape)
+    dataset = KitsDataset(image_root, mask_root, pre_process=False)
 
-    areas = get_area(masks[0])
-    if len(areas) >= 2:
-        areas = areas[:2]
-    else:
-        areas = areas[0]
-    area_size = (80, 80, 80)
-    for i in range(len(areas)):
-        mask, img, normal, crop_edge = crop_area(masks[0], images[0], areas[i], area_size)
-        # print(mask.shape, img.shape)
-        show_views(img[20], mask[20])
-
-        Save.save_2_nii(img.float(), config.save_path, "kidney_cube")
-        Save.save_2_nii(mask.float(), config.save_path, "mask_cube")

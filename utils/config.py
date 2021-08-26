@@ -25,6 +25,9 @@ class BaseConfig:
         self.save_path = "/public/datasets/lung/predict/"
         # load model file path
         self.pre_model_path = ""
+        self.data_parallel = False
+        # os.environ['CUDA_VISIBLE_DEVICES'] = []
+        self.device_ids = [2, 3]
 
         # resample CT image shape ()
         self.new_size = (128, 256, 256)
@@ -36,7 +39,7 @@ class Config(BaseConfig):
         '''
             set your config 
         '''
-        self.batch_size = 16
+        self.batch_size = 4
         self.epochs = 40
         self.spacing = (3.22, 1.62, 1.62)
         self.entropy_weight = [1, 4, 8, 8]
@@ -55,6 +58,7 @@ class Config(BaseConfig):
         self.origin_data_path = os.path.join(self.root_path, "data")
         self.image_3d_path = os.path.join(self.root_path, "image")
         self.mask_3d_path = os.path.join(self.root_path, "mask")
+
         self.mask_3D_cube = os.path.join(self.root_path, "mask_cube")
         self.image_3D_cube = os.path.join(self.root_path, "image_cube")
         self.kits_val_image_path = os.path.join(self.root_path, "val/image")
@@ -86,7 +90,7 @@ class Config(BaseConfig):
         self.dataset_json = ""
         self.layer_thick = 32
 
-        self.thickness = 3.5
+        self.thickness = 2
         self.ct_stage = "normal"  # normal, enh_a, enh_d
 
         self.area_size = (self.layer_thick, 384, 384)
@@ -94,20 +98,43 @@ class Config(BaseConfig):
 
         self.case_imgs_name = ".nii.gz"
         self.case_mask_name = ".nii.gz"
-        self.windowing = [-135, 215]
+        self.windowing = [-79, 304]
         self.stride = 8
         self.trans_types = ['AffineNoTranslate', 'AffineNoTranslate', 'HorizontalFlip',
                             'HorizontalFlip_Affine', 'HorizontalFlip_Affine']
         self.change_label = {'2': 0, '3': 0}
 
+        # crop origin dataset shape to 32*384*384
         self.crop_dataset_path = os.path.join(self.root_path, "crop_slice")
         self.crop_origin_mask = os.path.join(self.crop_dataset_path, "mask")
         self.crop_origin_image = os.path.join(self.crop_dataset_path, "image")
+        # for kidney area data may be not normal
         self.crop_cube_path = os.path.join(self.root_path, "kidney_cube")
+        self.crop_cube_mask = os.path.join(self.crop_cube_path, "mask")
+        self.crop_cube_image = os.path.join(self.crop_cube_path, "image")
+        # crop kidney area data to normal shape 64*128*128
+        self.crop_64cube_path = os.path.join(self.root_path, "kidney_64cube")
+        self.crop_64cube_mask = os.path.join(self.crop_64cube_path, "mask")
+        self.crop_64cube_image = os.path.join(self.crop_64cube_path, "image")
+        self.coarse = True
 
         self.crop_xy = (self.area_size[1], self.area_size[2])
         self.case_name_json = os.path.join(self.root_path, "json_file/cases_name.json")
         self.cases_spacing_json = os.path.join(self.root_path, "json_file/cases_spacing.json")
+        self.kidney_info_json = os.path.join(self.root_path, "json_file/kidney_info.json")
+        self.cube_shape_json = os.path.join(self.root_path, "json_file/cube_shape.json")
+        self.cube_name_json = os.path.join(self.root_path, "json_file/cube_name.json")
+
+
+class CoarseConfig(Config):
+    def __init__(self):
+        super(CoarseConfig, self).__init__()
+        self.layer_thick = 64
+        self.area_size = (self.layer_thick, 128, 128)
+        self.resize_xy = (128, 128)
+        self.crop_xy = (self.area_size[1], self.area_size[2])
+        self.coarse = False
+        self.batch_size = 16
 
 
 config = Config()

@@ -19,7 +19,7 @@ class Msg:
             Device:          {conf.device.type}
             network:         {conf.network}
             optimizer:       {conf.optimizer}
-            sec_network:     {conf.second_network}
+            coarse:          {conf.coarse}
             
         ''')
 

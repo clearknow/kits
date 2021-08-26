@@ -4,11 +4,10 @@ import torch.nn.functional as F
 from torchsummary import summary
 from tensorboardX import SummaryWriter
 from utils.config import Config
-import segmentation_models_pytorch as smp
 from net.Unet import Res_UNet, UNet_2_skip
 from net.ResUnet import ResNetUNet
-from net.vision_transformer import SwinUnet
-
+# from net.vision_transformer import SwinUnet
+from net.ResUnet_3D import UNet3D
 
 # 保持slice的维度不变
 class UNet_3d(nn.Module):
@@ -124,18 +123,19 @@ class OutConv(nn.Module):
 
 
 def choose_net(network, in_channel=1, classes=4, img_size=256):
-    if network == "Unet_smp":
-        return smp.Unet('resnet34', classes=classes, in_channels=in_channel)
-    elif network == "Unet":
+    # if network == "Unet_smp":
+    #     return smp.Unet('resnet34', classes=classes, in_channels=in_channel)
+    if network == "Unet":
         # cant use
         return Res_UNet(n_channels=in_channel, classes=classes)
-    elif network == "SwinUnet":
-        return SwinUnet(num_classes=classes, img_size=img_size)
+    elif network == "ResNetUNet-3D":
+        return UNet3D()
+    # elif network == "SwinUnet":
+    #     return SwinUnet(num_classes=classes, img_size=img_size)
     elif network == "ResNetUNet" or network == "ResNetUNet_no_weight" or\
             "ResNetUNet_2_skip" or network == "ResNetUNet_second" or \
             network == "ResNetUNet_second_no_weight":
         return ResNetUNet(in_channel=in_channel, classes=classes)
-
 
 
 if __name__ == "__main__":

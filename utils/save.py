@@ -36,7 +36,14 @@ class Save:
 
 
 if __name__ == "__main__":
-    image_path = os.path.join(config.crop_origin_image, "case_00049-002-03.pth")
+    image_path = os.path.join(config.crop_origin_mask, "case_00064-002-00.pth")
     image_tensor = torch.load(image_path)
-    print(image_tensor.shape)
-    Save.save_2_nii(image_tensor, config.save_path)
+    print(image_tensor.shape, image_tensor.max())
+    Save.save_2_nii(image_tensor, config.save_path, patient_name="mask")
+
+    image_path = os.path.join(config.crop_origin_image, "case_00064-002-00.pth")
+    print(image_path)
+    image_tensor = torch.load(image_path)
+
+    print(image_tensor.shape, image_tensor.max())
+    Save.save_2_nii(image_tensor, config.save_path, patient_name="image")

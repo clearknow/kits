@@ -91,6 +91,8 @@ class ResNetUNet(nn.Module):
         return out
 
 
+
+
 if __name__ == "__main__":
     model = ResNetUNet(1, 4)
     # print(model)

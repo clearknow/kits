@@ -1,0 +1,27 @@
+INFO: Starting training:
+            Epochs:          40
+            Batch size:      4
+            Learning rate:   0.001
+            Device:          cuda
+            network:         ResNetUNet-3D
+            optimizer:       conv_coarse_True_Adam1629623568.2993014
+            coarse:          True
+            
+        
+INFO: 
+            Training size:   18576
+            Validation size: 1914
+        
+Epoch1/40:   0%|          | 0/18576 [00:00<?, ?img/s]Epoch1/40:   0%|          | 0/18576 [00:15<?, ?img/s]
+Traceback (most recent call last):
+  File "train_3D.py", line 43, in <module>
+    validation.training_3d(model, config)
+  File "/public/home/cxiao/Study/git_pro/kits20_xcd/utils/validation.py", line 221, in training_3d
+    loss = criterion(masks_pred, true_masks)
+  File "/public/home/cxiao/.local/lib/python3.8/site-packages/torch/nn/modules/module.py", line 1051, in _call_impl
+    return forward_call(*input, **kwargs)
+  File "/public/home/cxiao/.local/lib/python3.8/site-packages/torch/nn/modules/loss.py", line 1120, in forward
+    return F.cross_entropy(input, target, weight=self.weight,
+  File "/public/home/cxiao/.local/lib/python3.8/site-packages/torch/nn/functional.py", line 2824, in cross_entropy
+    return torch._C._nn.cross_entropy_loss(input, target, weight, _Reduction.get_enum(reduction), ignore_index)
+RuntimeError: Expected all tensors to be on the same device, but found at least two devices, cuda:2 and cuda:0! (when checking arugment for argument target in method wrapper_nll_loss2d_forward)

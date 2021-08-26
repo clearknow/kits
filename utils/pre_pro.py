@@ -3,8 +3,6 @@ import cv2
 import sys
 from data.BasisDataset import BaseDataset
 sys.path.append("../")
-from utils.data_prepare_3d import DataPrepare3D
-
 from utils.visualization import show_image_hist, show_single_view
 import SimpleITK as sitk
 from utils.config import config
@@ -14,6 +12,10 @@ from threading import Thread
 from matplotlib import pyplot as plt
 from utils.convert import Convert
 from itertools import groupby
+from utils.data_prepare_3d import DataPrepare3D
+import torch
+import pandas as pd
+import matplotlib.pyplot as plt
 
 # normalize HU to [1,255]
 def normalize(image):
@@ -369,30 +371,38 @@ def calculate_all():
 
 
 class Metrics_thread(Thread):
-    def __init__(self, begin_case, final_case):
+    def __init__(self, file_path, begin_case, final_case):
         Thread.__init__(self)
         self.result = 0
         self.begin_case = begin_case
         self.final_case = final_case
+        self.file_path = file_path
 
     def run(self):
         # print("start")
-        copy_cases(self.begin_case, self.final_case)
+        self.result = get_cases_spacing(self.file_path, self.begin_case, self.final_case)
+
+    def result(self):
+        return self.result
 
 
-def get_cases_spacing(file_path, target_type=".nii.gz"):
+def get_cases_spacing(file_path, start=0, end=300, target_type=".nii.gz"):
     """
 
     :param file_path: case or cube path
     :param target_type: ".nii.gz"
+    :param start:
+    :param end:
     :return: dict {"filename":spacing}
     """
     cases_spacing = dict()
-    for case_name in os.listdir(file_path):
+
+    for case_name in os.listdir(file_path)[start:end]:
         case_path = os.path.join(file_path, case_name)
+        print(case_name)
         if case_path.endswith(".nii.gz"):
             _, spacing = Convert.nii_2_np(case_path)
-            cases_spacing[case_name] = spacing.tolist()
+            cases_spacing[case_name.split(".")[0]] = spacing.tolist()
 
     return cases_spacing
 
@@ -427,7 +437,7 @@ def copy_cases(begin_case=0, final_case=270):
         print(image_save_path)
 
 
-def get_case_name(cases_path):
+def get_case_name():
     # print("kits")
     data_path = "/public/datasets/kidney/kits21/kits21/data"
 
@@ -441,20 +451,180 @@ def get_case_name(cases_path):
     return {"cases_name": cases_list}
 
 
+def get_cube_name():
+    """
+    get cube file name
+    :return: dict
+    """
+    # print("kits")
+    data_path = config.crop_cube_image
+
+    # all patients gz files
+    cases_list = list()
+    for patient in os.listdir(data_path):
+        if patient.endswith(".nii.gz"):
+            patient_id = patient.split(".")[0]
+            # print(patient_id)
+            cases_list.append(patient_id)
+    return {"cases_name": cases_list}
+
+
 def get_all_kits():
     case_thread = list()
+    result = dict()
     for i in range(10):
-        case_thread.append(Metrics_thread(i*30, 30*(i+1)))
+        case_thread.append(Metrics_thread(config.image_3d_path, i*30, 30*(i+1)))
         case_thread[i].start()
     for i in range(10):
         case_thread[i].join()
+        result.update(case_thread[i].result())
         print("end")
+    return result
+
+
+def data_crop(img, crop_xy):
+    """crop data xy to target size
+
+    Args:
+        img : image, [c,z,x,y] or [c, x, y]
+        crop_xy : target size, [x, y]
+
+    Returns:
+        img_crop
+    """
+    img_shape = img.shape
+
+    if len(img_shape) == 3:
+        if type(img) == np.ndarray:
+            img = np.expand_dims(img, 0)
+        else:
+            img = torch.unsqueeze(img, dim=0)
+
+    center = (int(img_shape[-2] / 2), int(img_shape[-1] / 2))
+
+    x_edge = [center[0] - int(crop_xy[0] / 2), center[0] + int(crop_xy[0] / 2)]
+    y_edge = [center[1] - int(crop_xy[1] / 2), center[1] + int(crop_xy[1] / 2)]
+
+    img = img[:, :, x_edge[0]:x_edge[1], y_edge[0]:y_edge[1]]
+
+    if len(img_shape) == 3:
+        if type(img) == np.ndarray:
+            img = np.squeeze(img, 0)
+        else:
+            img = torch.squeeze(img, dim=0)
+
+    return img
+
+
+def z_resample(img, spacing, re_thickness=3.5, re_xy=[512, 512], interpolation=cv2.INTER_NEAREST):
+    """resample img to target thickness and target xy size (64, 256, 256)[z:1, x:1, y:1]-> (32, 512, 512)[z:2, x:0.5, y:0.5]
+
+    Args:
+        img : image, [z, x, y]
+        spacing : spacing, [x_spacing, y_spacing, z_spacing]
+        re_thickness (int, optional): target z thickness. Defaults to 2.
+        re_xy (list, optional): target xy size. Defaults to [512, 512].
+        interpolation ([type], optional): interpolation method. Defaults to cv2.INTER_NEAREST.
+
+    Returns:
+        resample_image, new_spacing
+    """
+
+    # RESCALE ALONG Z-AXIS.
+    resize_x = 1.0
+    # print(spacing[0], re_thickness)
+    resize_z = float(spacing[0]) / float(re_thickness)
+    # print(img.shape, spacing[0], resize_z)
+    img = cv2.resize(img, dsize=None, fx=resize_x, fy=resize_z, interpolation=interpolation)
+
+    # CHANGE ORDER: (z, x, y) -> (x, y, z).
+    img = img.swapaxes(0, 2)
+    img = img.swapaxes(0, 1)
+    # print(img.shape)
+    # RESCALE ALONG XY-AXIS.
+    resize_x = float(re_xy[0] / float(img.shape[0]))
+    resize_y = float(re_xy[1] / float(img.shape[1]))
+    img = cv2.resize(img, dsize=None, fx=resize_x, fy=resize_y, interpolation=interpolation)
+
+    # CHANGE ORDER: (x, y, z) -> (z, x, y).
+    # print(img.shape)
+    img = img.swapaxes(0, 2)
+    # print(img.shape)
+    img = img.swapaxes(2, 1)
+
+    new_spacing = [re_thickness, spacing[1] / resize_x, spacing[2] / resize_y]
+
+    return img, new_spacing
+
+
+def data_windowing(img,  windowing):
+    """windowing data
+
+    Args:
+        img : image
+        windowing: [bottom, top]
+
+    Returns:
+        image_windowing
+    """
+    img[img < windowing[0]] = windowing[0]
+    img[img > windowing[1]] = windowing[1]
+    img = (img - 101) / 76.9
+    return img
+
+
+def preprocess(config, img_arr, old_spacing):
+    """ data preprocess
+
+    Args:
+        img_arr (np): image array
+        mask_arr (np): mask array
+        ct_info (list): spacing [z,x,y]
+
+    Returns:
+        [type]: processed image, processed mask, new ct information, old_spacing
+    """
+    # resample
+    img_arr, new_spacing = z_resample(img_arr, old_spacing, re_thickness=config.thickness, re_xy=config.resize_xy)
+
+    # Windowing
+    img_arr = data_windowing(img_arr, config.windowing)
+    # mask_arr = data_windowing(mask_arr, self.windowing)
+
+    # z pading
+    if img_arr.shape[0] < config.layer_thick:
+        p = config.layer_thick - img_arr.shape[0]
+        img_arr = np.pad(img_arr, ((0, p), (0, 0), (0, 0)), 'minimum')
+    # print('pading shape', img_arr.shape, mask_arr.shape, self.layer_thick)
+    assert img_arr.shape[0] >= config.layer_thick
+
+    # change spacing
+    new_spacing = tuple(new_spacing)
+
+    return img_arr, new_spacing
+
+
+def case_spacing_distribute():
+    cases_space_json = pd.read_json(config.cases_spacing_json)
+    print(cases_space_json["case_00049"])
+    case_id = [0 for i in range(300)]
+    for case in cases_space_json:
+        id = int(case[7:10])
+        case_id[id] = cases_space_json[case][0]
+    plt.hist(np.array(case_id), 300)
+    plt.show()
 
 
 if __name__ == "__main__":
-    image = config.image_3d_path+"/case_00160.nii.gz"
-    mask = config.mask_3d_path
-    result = get_case_name(config.image_3d_path)
-    DataPrepare3D.info_to_json(config.case_name_json, result)
-    # get_all_kits()
+    case_spacing_distribute()
+
+    # image = config.image_3d_path + "/case_00223.nii.gz"
+    # mask = config.mask_3d_path + "/case_00223.nii.gz"
+    # result = get_cube_name()
+    # print(result)
+    # DataPrepare3D.info_to_json(config.cube_name_json, result)
+    # # result = get_cases_spacing(config.mask_3d_path)
+    # result = get_case_name()
+    # DataPrepare3D.info_to_json(config.case_name_json, result)
+    # # get_all_kits()
 

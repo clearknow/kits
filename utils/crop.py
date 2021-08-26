@@ -13,6 +13,7 @@ import torch
 from utils.pre_pro import normalize
 from utils.config import config
 import os
+from utils.tool import MyEncoder
 
 
 # 裁剪ROI
@@ -117,18 +118,6 @@ def read_image_json(file_name:str):
         cases = json.load(f)
     cases = json.loads(cases)
     return cases
-
-
-class MyEncoder(json.JSONEncoder):
-    """
-    重写json模块JSONEncoder类中的default方法
-    """
-    def default(self, obj):
-        # np整数转为内置int
-        if isinstance(obj, np.integer):
-            return int(obj)
-        else:
-            return super(json.JetEncoder, self).default(obj)
 
 
 def get_crop_info(image, mask):

@@ -5,7 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchsummary import summary
 from tensorboardX import SummaryWriter
-import segmentation_models_pytorch as smp
 
 
 class DoubleConv(nn.Module):

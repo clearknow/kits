@@ -13,7 +13,6 @@ from torch import optim
 from torch import nn
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
-from data.kits_dataset import KitsDataset
 from utils.crop import read_image_json
 import logging
 import os
@@ -21,19 +20,19 @@ import torch.nn.functional as F
 import numpy as np
 from utils.metrics import compute_metrics_for_label, compute_disc_for_slice
 from configuration.labels import KITS_HEC_LABEL_MAPPING, HEC_NAME_LIST, HEC_SD_TOLERANCES_MM, GT_SEGM_FNAME
+from utils.pre_pro import preprocess, data_crop
 sys.path.append("../")
 from threading import Thread
 import cv2
-from loss.loss_function import Focal_loss, DiceLoss
-from generalized_wasserstein_dice_loss.loss import GeneralizedWassersteinDiceLoss
+from data.kits_3D_dataset import KitsDataset3D
+import math
 
 
 class Validation:
     def __init__(self):
         pass
 
-    def training(self, model,
-                 config: Config):
+    def training(self, model, config: Config):
         """
         :param model: training model
         :param config: user config
@@ -85,7 +84,6 @@ class Validation:
             model.train()
             epoch_loss = 0
             with tqdm(total=n_train, desc=f'Epoch{epoch+1}/{config.epochs}', unit="img") as pbar:
-
                 for batch in train_loader:
                     # read image
                     imgs = batch['image']
@@ -156,11 +154,122 @@ class Validation:
 
         writer.close()
 
-    def eval_net(self, model, config: Config, is_training=True) -> float:
+    def training_3d(self, model, config: Config):
+        """
+        :param model: training model
+        :param config: user config
+        :return: None
+        """
+        msg = Msg()
+        msg.training_conf(config)
+        # dataset
+        train = KitsDataset3D(config)
+        val = KitsDataset3D(config, is_train=False)
+        # train = train[:1]
+        n_train = len(train)
+        n_val = len(val)
+        msg.num_dataset(n_train, n_val)
+        train_loader = DataLoader(train, batch_size=config.batch_size,
+                                  shuffle=True, num_workers=config.num_workers)
+        val_loader = DataLoader(val, batch_size=config.batch_size,
+                                shuffle=False, num_workers=config.num_workers)
+        # training
+        # optimizer
+        # optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.lr)
+        optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+        # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=1)
+        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[10, config.epochs-10], gamma=0.1)
+        # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
+        # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
+        # visualization
+        # writer = SummaryWriter()
+        summary_title = f'{config.network}_{config.optimizer}_{config.loss}'
+        if config.weight:
+            summary_title = f'{config.network}_{config.optimizer}_weight'
+        writer = SummaryWriter(comment=summary_title)
+
+        if config.loss == 0:
+            # weights = torch.FloatTensor(config.entropy_weight).to(device=config.device)
+            # criterion = nn.CrossEntropyLoss(weight=weights)
+            criterion = nn.CrossEntropyLoss()
+        else:
+            criterion = nn.BCEWithLogitsLoss()
+        # begin training
+        global_step = 0
+
+        for epoch in range(config.epochs):
+            model.train()
+            epoch_loss = 0
+            with tqdm(total=n_train, desc=f'Epoch{epoch+1}/{config.epochs}', unit="img") as pbar:
+                for batch in train_loader:
+                    # read image
+                    imgs = batch['image']
+                    masks = batch['mask']
+
+                    imgs = imgs.to(device=config.device, dtype=torch.float32)
+                    # when use softmax type have to
+                    mask_type = torch.float32 if config.loss == 1 else torch.long
+                    true_masks = masks.to(device=config.device, dtype=mask_type)
+                    if config.loss == 0:
+                        true_masks = true_masks.squeeze(dim=1)
+                    masks_pred = model(imgs)
+                    # print("train", true_masks.shape, masks_pred.shape)
+                    # print(imgs.max())
+                    # focal loss or other
+                    # masks_pred = masks_pred.argmax(dim=1)
+                    # print(masks_pred.shape, true_masks.max())
+                    loss = criterion(masks_pred, true_masks)
+                    epoch_loss += loss
+                    # print(loss)
+                    pbar.set_postfix(**{'loss (batch)': loss.item()})
+
+                    optimizer.zero_grad()
+                    loss.backward()
+                    nn.utils.clip_grad_value_(model.parameters(), 0.1)
+                    optimizer.step()
+
+                    pbar.update(imgs.shape[0])
+                    del imgs, masks, true_masks, masks_pred
+                    gc.collect()
+                global_step += 1
+
+                val_score, val_dice_sds = self.eval_net(model, config, val_loader)
+                writer.add_scalar(f'{summary_title}/learning_rate', optimizer.param_groups[0]['lr'], global_step)
+                disc_mean, sds_mean = np.mean(val_dice_sds, axis=0)
+                writer.add_scalar(f'{summary_title}/Loss/train', epoch_loss.item()/len(train_loader), global_step)
+
+                writer.add_scalars(f'{summary_title}/disc_sds', {"disc": disc_mean, "sds": sds_mean},
+                                   global_step)
+                writer.add_scalars(f'{summary_title}/per_disc_sds',
+                                   {"class1_disc": val_dice_sds[0][0], "class1_sds": val_dice_sds[0][1],
+                                    "class2_disc": val_dice_sds[1][0], "class2_sds": val_dice_sds[1][1],
+                                    "class3_disc": val_dice_sds[2][0], "class3_sds": val_dice_sds[2][1]},
+                                   global_step)
+                scheduler.step()
+                # get kits ds and sd
+                # val_ds_sd = self.kits_valuate(model, val_loader, config)
+                logging.info('Validation cross entropy: {}'.format(val_score))
+                logging.info('Validation mean disc: \n {}'.format(val_dice_sds))
+
+                writer.add_scalar(f'{summary_title}/Loss/test', val_score, global_step)
+            # save model
+            try:
+                os.mkdir(summary_title)
+                logging.info('Created checkpoint directory')
+            except OSError:
+                pass
+            torch.save(model.state_dict(),
+                       f"{summary_title}/CP_epoch{epoch + 1}.pth")
+            logging.info(f'Checkpoint {epoch + 1} saved !')
+
+        writer.close()
+
+    def eval_net(self, model, config: Config, val_loader, is_training=True) -> float:
         """
         evaluate the train network
         :param self:
         :param model:
+        :param val_loader:
         :param config: cpu or cuda
         :param is_training:training evaluate
         :return: score loss and kits disc and sds(3(disc)+3(sds)+2(mean))
@@ -168,128 +277,35 @@ class Validation:
         kits_metrics = np.zeros((len(HEC_NAME_LIST), 2), dtype=float)
         model.eval()
         mask_type = torch.long
-        if config.second_network:
-            var_dataset = BaseDataset(config.val_image_path, config.val_mask_path,
-                                      pre_pro=True, is_val=True)
-            # var_loader = DataLoader(var_dataset, batch_size=config.batch_size,
-            #                         shuffle=True, num_workers=config.num_workers)
-        else:
-            var_dataset = BaseDataset(config.val_image_path, config.val_mask_path,
-                                      is_val=True)
-        n_val = len(var_dataset)  # the number of batch
 
-        tot = 0
-        counter = len(var_dataset)
         # with tqdm(total=n_val, desc='Validation round', unit='case', leave=False) as pbar:
-        if not config.second_network:
-            counter = 0
-            for case in var_dataset:
-                imgs, true_masks = case['image'], case['mask']
-                imgs = imgs.to(device=config.device, dtype=torch.float32)
-                true_masks = true_masks.to(device=config.device, dtype=mask_type)
-                spacing = case['spacing']
-                imgs = imgs.to(device=config.device, dtype=torch.float32)
+        tot = 0
+        for case in val_loader:
+            imgs, true_masks = case['image'], case['mask']
+            imgs = imgs.to(device=config.device, dtype=torch.float32)
+            true_masks = true_masks.to(device=config.device, dtype=mask_type)
+            spacing = case['spacing']
 
-                case_pred = 0
-                batch_size = 16
-                # print(imgs.shape[0])
-                if imgs.shape[0] > 600:
-                    # break
-                    continue
-                counter += 1
+            with torch.no_grad():
+                case_pred = model(imgs)
 
-                # 理论上分批次与全部批次预测结果一样：分成64批次
-                for batch in range(imgs.shape[0]//batch_size+1):
-                    with torch.no_grad():
-                        if imgs.shape[0] <= batch*batch_size:
-                            break
-                        if batch == len(imgs) // batch_size:
-                            mask_pred = model(imgs[batch*batch_size:])
-                        else:
-                            mask_pred = model(imgs[batch*batch_size:(batch+1)*batch_size])
-                        if batch == 0:
-                            case_pred = mask_pred
-                        else:
-                            case_pred = torch.cat([case_pred, mask_pred], dim=0)
-                        del mask_pred
-                        gc.collect()
-                if config.loss == 0:
-                    true_masks = true_masks.squeeze(dim=1)
+            true_masks = true_masks.squeeze(dim=1)
 
-                    tot += F.cross_entropy(case_pred, true_masks).item()
-                    # print(true_masks.shape, case_pred.shape)
-                    case_pred = case_pred.argmax(dim=1)
-                    # 将整个case合并
-                    case_pred = case_pred.squeeze(dim=1)
-                    # images, masks = crop_images()
-                    kits_metrics += self.calculate_metrics(case_pred.cpu().numpy(),
-                                                           true_masks.cpu().numpy(),
-                                                           spacing.cpu().numpy())
-                    # kits_metrics = 0
-                del case_pred, imgs, true_masks
-                gc.collect()
-                # pbar.update()
-        else:
-            counter = 0
-            for index, case in enumerate(var_dataset):
-                imgs, true_masks = case['image'], case['mask']
-                imgs = imgs.to(device=config.device, dtype=torch.float32)
-                true_masks = true_masks.to(device=config.device, dtype=mask_type)
-                # print(mask_type)
-                spacing = case['spacing']
+            tot += F.cross_entropy(case_pred, true_masks).item()
+            # print(true_masks.shape, case_pred.shape)
+            case_pred = case_pred.argmax(dim=1)
+            # 将整个case合并
+            # images, masks = crop_images()
+            # print(case_pred.shape, true_masks.shape, spacing.shape)
+            kits_metrics += self.calculate_metrics(case_pred.cpu().numpy(),
+                                                   true_masks.cpu().numpy(),
+                                                   spacing.cpu().numpy())
 
-                case_pred = 0
-                batch_size = 16
-                # print(imgs.shape[0])
-                # if imgs.shape[0] > 600:
-                #     # break
-                #     continue
-                counter += 1
-                # case slice patch_count bbox[y y x x]
-                crop_infos = read_image_json(config.image_json)
-                crop_info = crop_infos[var_dataset.ids[index]]
-                # print(index)
-                crop_image, crop_mask = get_cube(imgs, true_masks, crop_info)
-                # print(crop_image.shape, crop_mask.shape)
-
-                # 理论上分批次与全部批次预测结果一样：分成64批次
-                for batch in range(crop_image.shape[0] // batch_size + 1):
-                    # print(batch)
-                    with torch.no_grad():
-                        if crop_image.shape[0] <= batch * batch_size:
-                            break
-                        if batch == len(crop_image) // batch_size:
-                            mask_pred = model(crop_image[batch * batch_size:])
-                        else:
-                            mask_pred = model(crop_image[batch * batch_size:(batch + 1) * batch_size])
-                        if batch == 0:
-                            case_pred = mask_pred
-                        else:
-                            case_pred = torch.cat([case_pred, mask_pred], dim=0)
-                        del mask_pred
-                        gc.collect()
-                # print(case_pred.shape)
-                # 将整个case合并
-                # print(case_pred.shape, crop_mask.shape)
-                crop_mask = crop_mask.squeeze(dim=1)
-                # print(case_pred.dtype, crop_mask.dtype)
-                tot += F.cross_entropy(case_pred, crop_mask).item()
-                case_pred = case_pred.argmax(dim=1)
-                # print(crop_image.shape)
-                combine_pred = combine_image(case_pred, imgs.shape, crop_info)
-                combine_pred = combine_pred.squeeze(dim=1)
-                true_masks = true_masks.squeeze(dim=1)
-                # print(crop_mask.shape, case_pred.shape, crop_mask.shape)
-                # print(true_masks.shape, case_pred.shape)
-                kits_metrics += self.calculate_metrics(combine_pred.cpu().numpy(),
-                                                       true_masks.cpu().numpy(),
-                                                       spacing.cpu().numpy())
-                    # kits_metrics = 0
-                del case_pred, imgs, true_masks
-                gc.collect()
+            gc.collect()
+            # pbar.update()
         if is_training:
             model.train()
-        return tot / counter, kits_metrics / counter
+        return tot / len(val_loader), kits_metrics / len(val_loader)
 
     def predict(self, model, image: np.ndarray, config: Config):
         """
@@ -317,42 +333,60 @@ class Validation:
         # print(output.cpu().numpy())
         return output.cpu().numpy()
 
-    def predict_all(self, model, images, config, batch_size=64):
+    def predict_all(self, model, images, config, old_spacing=None):
         """
         predict a patient CT image
         :param model:
-        :param images: return a patient predict
+        :param images: [s,h,w]
         :param config:
-        :param batch_size
-        :return:
+        :param old_spacing:
+        :return: [slices or cube]: [n,32,384,384] or [n,64,128,128]
         """
-        if len(images.shape) != 4:
-            images = torch.FloatTensor(images).unsqueeze(dim=1)
-        # for i in range(len(images)):
-        #     # lung shape [h,w] to [c,h,w]
-        #     lung = np.expand_dims(images[i], 1)
-        #     print(lung.shape)
-        #
-        #     mask = self.predict(model, lung, config)
-        #     masks.append(mask)
+        # crop slice to 32*384*384 or 64*128*128
+        new_spacing = []
+        if config.coarse:
+            images, new_spacing = preprocess(config, images, old_spacing)
+            images = data_crop(images, config.crop_xy)
+        if type(images) == np.ndarray:
+            images = torch.from_numpy(images).float()
+        if type(images) != torch.FloatTensor:
+            images = images.float()
+        # print(images.shape)
+        # reshape to target shape [1,1,s,w,h]
+        z_thick = images.shape[0]
+        target_gen_size = config.layer_thick
+        range_val = int(math.ceil((z_thick - target_gen_size) / config.layer_thick) + 1)
+        images_slice = torch.zeros([range_val, config.layer_thick, config.crop_xy[0],  config.crop_xy[1]])
+        # print(images_slice.shape, images.shape)
+        stride = config.layer_thick
+        for i in range(range_val):
+            start_num = i * stride
+            end_num = start_num + target_gen_size
+            if end_num <= z_thick:
+                # 数据块长度没有超出x轴的范围,正常取块
+                images_slice[i] = images[start_num:end_num, :, :]
+            else:
+                # 数据块长度超出x轴的范围, 从最后一层往前取一个 batch_gen_size 大小的块作为本次获取的数据块
+
+                p = end_num - z_thick
+                # print(p, z_thick)
+                # images_slice[i] = images[(z_thick - target_gen_size):z_thick, :, :]
+                last_slices = images[start_num:z_thick, :, :]
+                images_slice[i] = torch.from_numpy(np.pad(np.array(last_slices), ((0, p), (0, 0), (0, 0)), 'minimum'))
+
+        if len(images_slice.shape) != 5:
+            images_slice = torch.unsqueeze(images_slice, dim=1)
+        # predict target images cube
         model.eval()
-        for batch in range(images.shape[0] // batch_size + 1):
-            with torch.no_grad():
-                # print(batch * batch_size, (batch + 1) * batch_size)
-                if images.shape[0] <= batch * batch_size:
-                    break
-                if batch == len(images) // batch_size:
-                    mask_pred = model(images[batch * batch_size:])
-                else:
-                    mask_pred = model(images[batch * batch_size:(batch + 1) * batch_size])
-                if batch == 0:
-                    case_pred = mask_pred
-                else:
-                    case_pred = torch.cat([case_pred, mask_pred], dim=0)
+        images_slice = images_slice.to(device=config.device)
+        # print(images_slice.dtype, config.device)
+        with torch.no_grad():
+            case_pred = model(images_slice)
+
         case_pred = case_pred.argmax(dim=1)
         # 将整个case合并
         case_pred = case_pred.squeeze(dim=1)
-        return case_pred
+        return torch.tensor(case_pred, dtype=torch.int8), images, new_spacing, z_thick
 
     @staticmethod
     def calculate_metrics(masks, ground_trues, spacing=None, second_network=False):
@@ -370,26 +404,31 @@ class Validation:
         # print("gt_len: "+str(len(ground_trues)))
         # for per_case in range(len(ground_trues)):
         metrics_case = np.zeros((len(HEC_NAME_LIST), 2), dtype=float)
-        for i, hec in enumerate(HEC_NAME_LIST):
-
-            metrics_case[i] = compute_metrics_for_label(masks, ground_trues,
-                                                        KITS_HEC_LABEL_MAPPING[hec],
-                                                        tuple(spacing),
-                                                        sd_tolerance_mm=HEC_SD_TOLERANCES_MM[hec])
-            #     metrics_thread.append(Metrics_thread(ground_trues[per_case],
-            #                                          masks[per_case],
-            #                                          tuple(spacing[per_case]),
-            #                                          hec))
-            # for i in range(len(HEC_NAME_LIST)):
-            #     metrics_thread[i].start()
-            # for i in range(len(HEC_NAME_LIST)):
-            #     metrics_thread[i].join()
-            #     print("end")
-            #
-            # for i in range(len(HEC_NAME_LIST)):
-            #     metrics_case[i] = metrics_thread[i].get_result()
-            # bs_metrics += metrics_case
-        return metrics_case
+        for cube in range(len(masks)):
+            # 可以每个cube创建一个线程计算指标：一共有batch_size 个线程
+            metrics_thread.append(Metrics_thread(masks[cube],
+                                                 ground_trues[cube],
+                                                 tuple(spacing[cube])))
+        for i in range(len(masks)):
+            metrics_thread[i].start()
+        for i in range(len(masks)):
+            metrics_thread[i].join()
+            # print("end")
+        dice_1_counter = 0
+        for i in range(len(masks)):
+            result = metrics_thread[i].get_result()
+            if result[2][0] == 1:
+                result[2][0] = 0
+                dice_1_counter += 1
+            bs_metrics += result
+        if len(masks) == dice_1_counter:
+            dice_mean = 0
+        else:
+            dice_mean = bs_metrics[2][0] / (len(masks) - dice_1_counter)
+        bs_metrics = bs_metrics / len(masks)
+        bs_metrics[2][0] = dice_mean
+        # print(dice_1_counter)
+        return bs_metrics
 
     def network_optimizer(self):
         pass
@@ -401,20 +440,21 @@ class Validation:
 
 
 class Metrics_thread(Thread):
-    def __init__(self, ground_trues, masks, spacing, hec):
+    def __init__(self, ground_trues, masks, spacing):
         Thread.__init__(self)
         self.result = 0
         self.ground_trues = ground_trues
         self.masks = masks
         self.spacing = spacing
-        self.hec = hec
 
     def run(self):
-        # print("start")
-        self.result = compute_metrics_for_label(self.ground_trues, self.masks,
-                                                KITS_HEC_LABEL_MAPPING[self.hec],
-                                                self.spacing,
-                                                sd_tolerance_mm=HEC_SD_TOLERANCES_MM[self.hec])
+        metrics_case = np.zeros((len(HEC_NAME_LIST), 2), dtype=float)
+        for i, hec in enumerate(HEC_NAME_LIST):
+            metrics_case[i] = compute_metrics_for_label(self.masks, self.ground_trues,
+                                                        KITS_HEC_LABEL_MAPPING[hec],
+                                                        tuple(self.spacing),
+                                                        sd_tolerance_mm=HEC_SD_TOLERANCES_MM[hec])
+        self.result = metrics_case
 
     def get_result(self):
         return self.result

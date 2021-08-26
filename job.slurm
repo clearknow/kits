@@ -12,7 +12,10 @@
 
 
 source deactivate
-source activate /public/tools/conda/envs/pytorch_env
+source activate $torch_env
 
 #jupyter nbconvert --execute --clear-output train.ipynb
-python train.py
+#python train_3D.py
+#python test.py
+#python 1.py
+python predict.py

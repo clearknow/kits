@@ -44,6 +44,7 @@ class BaseDataset(Dataset):
         """
         :return 1. [c,s,h,w]3D    2. [s,c,h,w] 2D
         """
+        print(len(self.ids))
         idx = self.ids[item//self.transform]
         image_root = self.image_root
         mask_root = self.mask_root
@@ -99,6 +100,7 @@ class BaseDataset(Dataset):
     # 获取目录下的文件路径名
     def get_file(self, image_root):
         ids = list()
+        print(image_root)
         if not self.is_val:
             for file in os.listdir(image_root):
                 if file.endswith(".npy"):
@@ -130,13 +132,13 @@ class BaseDataset(Dataset):
 
 
 if __name__ == "__main__":
-    image_root = config.image_root
-    mask_root = config.mask_root
-    base_dataset = BaseDataset(image_root, mask_root, transform=3)
+    image_root = config.val_image_path
+    mask_root = config.val_mask_path
+    base_dataset = BaseDataset(image_root, mask_root, is_val=True)
     print(len(base_dataset))
     index = 0
     images = base_dataset[index]
-    print(images["image"].shape, images["mask"].shape)
+    print(images["image"].shape, images["spacing"].shape)
     # show_views(images["image"][0], images["mask"][0], cmap="gray")
     # index = 1
     # images = base_dataset[index]

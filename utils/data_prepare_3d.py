@@ -14,18 +14,20 @@
 import os
 import math
 import json
-
+import sys
+sys.path.append("..")
 import torch
 import numpy as np
 import SimpleITK as sitk
 from utils.config import Config
-
 from utils.data_utils import z_resample, data_windowing, data_crop, get_area
 from utils.data_utils import load_nii, save_to_nii, crop_area
 from utils.data_utils import get_trans_compose, change_label
 import pandas as pd
 from PIL import Image
 from utils.visualization import show_views
+import pandas
+from utils.tool import MyEncoder
 
 
 class DataPrepare3D:
@@ -50,6 +52,7 @@ class DataPrepare3D:
         self.crop_dataset_path = config.crop_dataset_path
         self.origin_image = config.image_3d_path
         self.origin_mask = config.mask_3d_path
+        self.cases_spacing_json = config.cases_spacing_json
 
         self.crop_xy = config.crop_xy
 
@@ -90,7 +93,7 @@ class DataPrepare3D:
         Args:
             img_arr (np): image array
             mask_arr (np): mask array
-            ct_info (dict): ct infomation
+            ct_info (list): spacing [z,x,y]
 
         Returns:
             [type]: processed image, processed mask, new ct information, old_spacing
@@ -101,26 +104,27 @@ class DataPrepare3D:
         # print('change unique', np.unique(mask_arr))
 
         # resample
-        old_spacing = ct_info['space']
+        old_spacing = ct_info
         img_arr, new_spacing = z_resample(img_arr, old_spacing, re_thickness=self.thickness, re_xy=self.resize_xy)
         mask_arr, _ = z_resample(mask_arr, old_spacing, re_thickness=self.thickness, re_xy=self.resize_xy)
 
         # Windowing
         img_arr = data_windowing(img_arr, self.windowing)
-        mask_arr = data_windowing(mask_arr, self.windowing)
+        # mask_arr = data_windowing(mask_arr, self.windowing)
 
         # z pading
         if img_arr.shape[0] < self.layer_thick:
             p = self.layer_thick - img_arr.shape[0]
             img_arr = np.pad(img_arr, ((0, p), (0, 0), (0, 0)), 'minimum')
             mask_arr = np.pad(mask_arr, ((0, p), (0, 0), (0, 0)), 'minimum')
-        print('pading shape', img_arr.shape, mask_arr.shape, self.layer_thick)
+        # print('pading shape', img_arr.shape, mask_arr.shape, self.layer_thick)
         assert img_arr.shape[0] >= self.layer_thick and mask_arr.shape[0] >= self.layer_thick
 
         # change spacing
-        ct_info['space'] = tuple(new_spacing)
+        new_spacing = tuple(new_spacing)
+        # print(ct_info)
 
-        return img_arr, mask_arr, ct_info, old_spacing
+        return img_arr, mask_arr, new_spacing, new_spacing
 
     def get_valid_thickness(self, img_arr, mask_arr):
         """get valid thickness in data array
@@ -231,7 +235,8 @@ class DataPrepare3D:
     @staticmethod
     def info_to_json(file_path, info):
         with open(file_path, 'w') as f:
-            json.dump(info, f)
+            data = json.dumps(info, cls=MyEncoder)
+            json.dump(data, f)
 
     def transform_to_3d(self, cases_name, img_output, mask_output, coarse=True):
         """transform image to 3D block
@@ -248,8 +253,13 @@ class DataPrepare3D:
 
         if not os.path.exists(mask_output):
             os.mkdir(mask_output)
+
+        with open(self.cases_spacing_json) as f:
+            ct_info = json.load(f)
+            # ct_info = json.loads(ct_info)
+        # print(ct_info)
         for case_name in cases_name["cases_name"]:
-            print(case_name)
+            # print(case_name)
             img_path = os.path.join(self.origin_image, case_name+".nii.gz")
             mask_path = os.path.join(self.origin_mask, case_name+".nii.gz")
             # read origin case data
@@ -259,9 +269,11 @@ class DataPrepare3D:
             img_arr = sitk.GetArrayFromImage(img_nii).astype(np.float32).transpose((2, 1, 0))
             mask_arr = sitk.GetArrayFromImage(mask_nii).astype(np.uint8).transpose((2, 1, 0))
             # remove the diff shape ,h and w
+            img_arr, mask_arr, _, new_spacing = self.preprocess(img_arr, mask_arr, ct_info[case_name])
+            # print(mask_arr.max(), new_spacing)
             if coarse:
                 img_arr = self.xy_crop(img_arr)
-                mask_arr = self.xy_crop(img_arr)
+                mask_arr = self.xy_crop(mask_arr)
             if img_arr.shape[1] != self.area_size[1] or img_arr.shape[2] != self.area_size[
                     2] or img_arr.shape != mask_arr.shape:
                 continue
@@ -270,7 +282,7 @@ class DataPrepare3D:
             voxel_z = mask_arr.shape[0]
             target_gen_size = self.layer_thick
             range_val = int(math.ceil((voxel_z - target_gen_size) / self.stride) + 1)
-
+            # print(mask_arr.max())
             for i in range(range_val):
                 fileid = case_name + "-" + '%03d' % i
                 print(fileid)
@@ -286,19 +298,19 @@ class DataPrepare3D:
                     # 数据块长度超出x轴的范围, 从最后一层往前取一个 batch_gen_size 大小的块作为本次获取的数据块
                     img = img_arr[(voxel_z - target_gen_size):voxel_z, :, :]
                     mask = mask_arr[(voxel_z - target_gen_size):voxel_z, :, :]
-
+                if mask.max() == 0:
+                    continue
                 img = torch.from_numpy(img)
                 mask = torch.from_numpy(mask.astype(np.uint8))
 
                 img = torch.unsqueeze(img, dim=0)
                 mask = torch.unsqueeze(mask, dim=0)
-
+                # print(img.max(), mask.max())
                 torch.save(img, os.path.join(img_output, fileid + '.pth'))
                 torch.save(mask, os.path.join(mask_output, fileid + '.pth'))
-                # print(os.path.join(img_output, fileid + '.pth'))
                 print(os.path.join(mask_output, fileid + '.pth'))
 
-                assert img.shape[1] == self.layer_thick and mask.shape[1] == self.layer_thick
+                assert img.shape[1] == self.layer_thick and mask.shape[1] == self.layer_thick, "layer_thick difference"
                 # print(self.trans_types, np.unique(mask))
                 if len(self.trans_types) > 0 and mask.any() > 0:
                     # augmentation
@@ -317,8 +329,6 @@ class DataPrepare3D:
                         aug_name = fileid + '-' + '%02d' % j + '.pth'
                         torch.save(img_aug, os.path.join(img_output, aug_name))
                         torch.save(mask_aug, os.path.join(mask_output, aug_name))
-                        # print(os.path.join(img_output, aug_name))
-                        # print(os.path.join(mask_output, aug_name))
             print('*' * 30)
 
     @staticmethod
@@ -410,8 +420,62 @@ if __name__ == "__main__":
     config = Config()
     data_prepare = DataPrepare3D(config)
     cases_name = pd.read_json(config.case_name_json)
-    print("case", cases_name)
-    data_prepare.transform_to_3d(cases_name, config.crop_origin_image, config.crop_origin_mask)
+    from threading import Thread
+    class Metrics_thread(Thread):
+        def __init__(self, cases_name, crop_origin_image, crop_origin_mask):
+            Thread.__init__(self)
+            self.result = 0
+            self.cases_name = cases_name
+            self.crop_origin_image = crop_origin_image
+            self.crop_origin_mask = crop_origin_mask
+
+        def run(self):
+            # print("start")
+            self.result = data_prepare.transform_to_3d(self.cases_name,  self.crop_origin_image, self.crop_origin_mask)
+
+        def result(self):
+            return self.result
+
+    data_thread_list = list()
+    for i in range(30):
+        data_thread_list.append(Metrics_thread(cases_name[i*10:(i+1)*10],
+                                               config.crop_origin_image, config.crop_origin_mask))
+        data_thread_list[i].start()
+    for i in range(30):
+        data_thread_list[i].join()
+        print("end")
+
+    # --------------------data crop for coarse
+    # config = Config()
+    # data_prepare = DataPrepare3D(config)
+    # cases_name = pd.read_json(config.case_name_json)
+    # print(cases_name)
+    # data_prepare.transform_to_3d(cases_name, config.crop_origin_image, config.crop_origin_mask)
+
+
+
+
+
+    # config = Config()
+    # data_prepare = DataPrepare3D(config)
+    #
+    # case_name = "case_00104"
+    # mask_path = os.path.join(data_prepare.origin_mask, case_name + ".nii.gz")
+    # cases_kidneys_info = dict()
+    # # read origin case data
+    # # 512
+    # mask_nii = sitk.ReadImage(mask_path)
+    # mask_arr = sitk.GetArrayFromImage(mask_nii).astype(np.uint8).transpose((2, 1, 0))
+    # kidney_area = data_prepare.get_kidney_area(mask_arr)
+    # # print(kidney_area)
+    # case_kidneys_info = {"kidney":kidney_area}
+    # case_kidneys_info["new_spacing"] = [1.0, 1.0, 1.0]
+    # case_kidneys_info["old_spacing"] = [1.0, 1.0, 1.0]
+    # cases_kidneys_info[case_name] = case_kidneys_info
+    # print(cases_kidneys_info)
+    # data_prepare.info_to_json(config.kidney_info_json, cases_kidneys_info)
+
+
 
 
 
